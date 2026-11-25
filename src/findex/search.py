@@ -1,161 +1,135 @@
-"""Булевий пошук.
+"""Ранжований пошук.
 
-uv run python -m findex.search index.bin "whale ship"
-uv run python -m findex.search index.bin "whale OR ship NOT sea" --engine set
-
-Запит рахується зліва направо, без пріоритетів:
-  "a b"        -> a AND b
-  "a OR b c"   -> (a OR b) AND c
-  "a NOT b"    -> a AND NOT b
-  "NOT a"      -> всі документи без a
+uv run python -m findex.search index_pos.bin 'whale AND (ship OR boat) NOT sea "white whale"'
+uv run python -m findex.search index_pos.bin "white whale" "white whale" --scorer tfidf
+uv run python -m findex.search index_pos.bin        (без запиту - інтерактивний режим)
 """
 
 import argparse
+import functools
+import heapq
+import logging
+import sys
 import time
-import tracemalloc
+from dataclasses import dataclass
 from pathlib import Path
 
-from findex.tokenize import tokenize
+from findex.decorators import timed
+from findex.query import Node, QueryError, parse
+from findex.scoring import BM25, SCORERS
+from findex.snippet import doc_text, make_snippet
 
-# ---------- merge (два вказівники) ----------
-# Обидва списки відсортовані за doc_id. Йдемо по них одночасно,
-# завжди рухаємо той вказівник, де число менше. O(len(a) + len(b)).
-
-
-def merge_and(a, b):
-    i = j = 0
-    out = []
-    while i < len(a) and j < len(b):
-        if a[i] == b[j]:
-            out.append(a[i])
-            i += 1
-            j += 1
-        elif a[i] < b[j]:
-            i += 1
-        else:
-            j += 1
-    return out
+log = logging.getLogger("findex.search")
 
 
-def merge_or(a, b):
-    i = j = 0
-    out = []
-    while i < len(a) and j < len(b):
-        if a[i] == b[j]:
-            out.append(a[i])
-            i += 1
-            j += 1
-        elif a[i] < b[j]:
-            out.append(a[i])
-            i += 1
-        else:
-            out.append(b[j])
-            j += 1
-    # хвіст, який залишився (тільки один з них не порожній)
-    out.extend(a[i:])
-    out.extend(b[j:])
-    return out
+@dataclass(frozen=True, order=True)
+class SearchResult:
+    # order=True порівнює поля по черзі, тому score перший:
+    # sorted(results) - за балом, при однаковому балі - за doc_id
+    score: float
+    doc_id: int
+    title: str
 
 
-def merge_not(a, b):
-    """a AND NOT b: все з a, чого немає в b."""
-    i = j = 0
-    out = []
-    while i < len(a):
-        if j >= len(b) or a[i] < b[j]:
-            out.append(a[i])
-            i += 1
-        elif a[i] == b[j]:
-            i += 1
-            j += 1
-        else:
-            j += 1
-    return out
+class Searcher:
+    def __init__(self, index, engine="merge"):
+        self.index = index
+        self.engine = engine
+        # lru_cache на дерево запиту -> doc_ids. Дерево - frozen dataclass,
+        # тому хешується. Кеш свій для кожного Searcher (бо в кожного свій індекс).
+        self.match = functools.lru_cache(maxsize=256)(self._match)
+
+    def __repr__(self):
+        return f"Searcher({self.index!r}, engine={self.engine!r})"
+
+    @timed
+    def _match(self, tree):
+        # tuple, а не list: результат лежить у кеші, його не можна змінювати
+        return tuple(tree.evaluate(self.index, self.engine))
+
+    @timed
+    def search(self, query, scorer=None, k=10):
+        """Повертає топ-k SearchResult. query - рядок або вже готове дерево (Node)."""
+        if scorer is None:
+            scorer = BM25()
+        tree = query if isinstance(query, Node) else parse(query)
+
+        hits = self.match.cache_info().hits
+        ids = self.match(tree)
+        hit = self.match.cache_info().hits > hits
+        log.info("match %s -> %d docs (%s)", tree, len(ids), "cache hit" if hit else "cache miss")
+
+        # бали рахуємо тільки для документів, які пройшли булевий фільтр
+        scores = dict.fromkeys(ids, 0.0)
+        for term in set(tree.terms()):
+            if term not in self.index:
+                continue
+            for p in self.index[term]:
+                if p.doc_id in scores:
+                    scores[p.doc_id] += scorer(term, p, self.index)
+
+        # топ-k без повного сортування: O(n log k).
+        # при однаковому балі вище менший doc_id (щоб результат був стабільний)
+        top = heapq.nlargest(k, scores.items(), key=lambda x: (x[1], -x[0]))
+        return [SearchResult(score, d, self.index.doc_meta[d].title) for d, score in top]
 
 
-# ---------- через set ----------
-# простіше, але треба побудувати хеш-таблицю і потім ще відсортувати результат
-
-
-def set_and(a, b):
-    return sorted(set(a) & set(b))
-
-
-def set_or(a, b):
-    return sorted(set(a) | set(b))
-
-
-def set_not(a, b):
-    return sorted(set(a) - set(b))
-
-
-ENGINES = {
-    "merge": (merge_and, merge_or, merge_not),
-    "set": (set_and, set_or, set_not),
-}
-
-
-def parse_query(query):
-    """Рядок -> список (оператор, терм). Терми проходять через той самий tokenize."""
-    result = []
-    op = "AND"
-    for word in query.split():
-        if word in ("AND", "OR", "NOT"):  # оператори тільки великими літерами
-            op = word
-            continue
-        for term in tokenize(word):
-            result.append((op, term))
-            op = "AND"
-    return result
-
-
-def search(index, query, engine="merge"):
-    and_, or_, not_ = ENGINES[engine]
-    result = None
-    for op, term in parse_query(query):
-        ids = index.doc_ids(term)
-        if result is None:
-            if op == "NOT":
-                result = not_(index.all_doc_ids(), ids)
-            else:
-                result = list(ids)
-        elif op == "AND":
-            result = and_(result, ids)
-        elif op == "OR":
-            result = or_(result, ids)
-        else:
-            result = not_(result, ids)
-    return result if result is not None else []
+def print_results(searcher, query, scorer, k, before, after):
+    try:
+        tree = parse(query)
+        results = searcher.search(tree, scorer, k)
+    except QueryError as e:
+        print("query error:", e)
+        return
+    print(f"query: {tree}   scorer: {scorer!r}")
+    if not results:
+        print("  nothing found")
+    terms = set(tree.terms())
+    for rank, r in enumerate(results, 1):
+        meta = searcher.index.doc_meta[r.doc_id]
+        print(f"{rank:2}. [{r.score:6.2f}] {r.title}")
+        print("    " + make_snippet(doc_text(meta), terms, before=before, after=after))
+    print()
 
 
 def main():
-    from findex.store import load
+    from findex.store import open_index
 
     parser = argparse.ArgumentParser()
     parser.add_argument("index", type=Path)
-    parser.add_argument("query")
+    parser.add_argument("queries", nargs="*", help="без запитів - інтерактивний режим")
+    parser.add_argument("--scorer", choices=list(SCORERS), default="bm25")
     parser.add_argument("--engine", choices=["merge", "set"], default="merge")
-    parser.add_argument("--limit", type=int, default=10)
+    parser.add_argument("-k", type=int, default=5)
+    parser.add_argument("--color", action="store_true", help="підсвітка кольором (ANSI)")
+    parser.add_argument("-q", "--quiet", action="store_true", help="без логів @timed")
     args = parser.parse_args()
 
-    tracemalloc.start()
-    start = time.perf_counter()
-    index = load(args.index)
-    load_time = time.perf_counter() - start
+    logging.basicConfig(
+        level=logging.WARNING if args.quiet else logging.INFO, format="  [%(name)s] %(message)s"
+    )
+    # щоб символи, яких немає в кодуванні консолі Windows, не валили програму
+    sys.stdout.reconfigure(errors="replace")
+    before, after = ("\033[1;33m", "\033[0m") if args.color else ("**", "**")
+    scorer = SCORERS[args.scorer]()
 
     start = time.perf_counter()
-    doc_ids = search(index, args.query, args.engine)
-    search_time = time.perf_counter() - start
-    _, peak = tracemalloc.get_traced_memory()
-    tracemalloc.stop()
-
-    print(f"found: {len(doc_ids)} documents")
-    for doc_id in doc_ids[: args.limit]:
-        print(f"  [{doc_id}] {index.doc_meta[doc_id].title}")
-    if len(doc_ids) > args.limit:
-        print(f"  ... and {len(doc_ids) - args.limit} more")
-    print(f"load: {load_time:.2f} s, search ({args.engine}): {search_time * 1000:.2f} ms")
-    print(f"peak memory: {peak / 1024 / 1024:.1f} MB")
+    with open_index(args.index) as index:
+        print(index, f"loaded in {time.perf_counter() - start:.2f} s")
+        searcher = Searcher(index, args.engine)
+        if args.queries:
+            for q in args.queries:
+                print_results(searcher, q, scorer, args.k, before, after)
+        else:
+            while True:
+                try:
+                    q = input("findex> ").strip()
+                except EOFError:
+                    break
+                if not q:
+                    break
+                print_results(searcher, q, scorer, args.k, before, after)
+        print(searcher.match.cache_info())
 
 
 if __name__ == "__main__":

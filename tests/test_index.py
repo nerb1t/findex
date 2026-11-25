@@ -4,17 +4,9 @@ from array import array
 import pytest
 
 from findex.index import build_index
+from findex.merge import merge_and, merge_not, merge_or, set_and, set_not, set_or
 from findex.models import DocMeta, Posting
-from findex.search import (
-    merge_and,
-    merge_not,
-    merge_or,
-    parse_query,
-    search,
-    set_and,
-    set_not,
-    set_or,
-)
+from findex.query import parse
 from findex.store import load, save
 
 
@@ -88,13 +80,9 @@ def test_merge_vs_set():
         assert merge_not(a, b) == set_not(a, b)
 
 
-def test_parse_query():
-    assert parse_query("Cat dog OR bird NOT fish") == [
-        ("AND", "cat"),
-        ("AND", "dog"),
-        ("OR", "bird"),
-        ("NOT", "fish"),
-    ]
+def search(index, query, engine):
+    # булевий пошук з Lab 2, тепер через парсер з Lab 3
+    return parse(query).evaluate(index, engine)
 
 
 @pytest.mark.parametrize("engine", ["merge", "set"])
@@ -106,7 +94,6 @@ def test_search(corpus, engine):
     assert search(index, "dog NOT cat", engine) == [2]
     assert search(index, "NOT dog", engine) == [0]
     assert search(index, "unicorn", engine) == []
-    assert search(index, "", engine) == []
 
 
 @pytest.mark.parametrize("kind", ["plain", "slots", "array"])

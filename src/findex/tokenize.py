@@ -8,10 +8,14 @@ from collections.abc import Iterator
 TOKEN_RE = re.compile(r"[^\W\d_]+(?:['-][^\W\d_]+)*|\d+")
 
 
+def normalize(text: str) -> str:
+    """NFC + однаковий апостроф, але БЕЗ casefold (потрібно для сніпетів)."""
+    text = unicodedata.normalize("NFC", text)
+    return text.replace("’", "'").replace("ʼ", "'")  # ’ і ʼ -> '
+
+
 def tokenize(text: str) -> Iterator[str]:
     """Генератор токенів: NFC -> однаковий апостроф -> casefold -> finditer."""
-    text = unicodedata.normalize("NFC", text)
-    text = text.replace("’", "'").replace("ʼ", "'")  # ’ і ʼ -> '
-    text = text.casefold()
+    text = normalize(text).casefold()
     for m in TOKEN_RE.finditer(text):
         yield m.group()

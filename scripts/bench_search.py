@@ -7,7 +7,7 @@ import argparse
 import timeit
 from pathlib import Path
 
-from findex.search import merge_and, merge_or, set_and, set_or
+from findex.merge import merge_and, merge_or, set_and, set_or
 from findex.store import load
 
 

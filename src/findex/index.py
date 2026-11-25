@@ -1,8 +1,8 @@
 """Інвертований індекс.
 
 uv run python -m findex.index data/ --out index.bin
+uv run python -m findex.index data/ --out index_pos.bin --positions   (для фраз)
 uv run python -m findex.index data/ --out index.json
-uv run python -m findex.index data/ --out index_pos.bin --positions
 """
 
 import argparse
@@ -15,6 +15,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 from findex.corpus import iter_documents
+from findex.decorators import timed
 from findex.models import DocMeta, Index, PlainPosting, Posting
 from findex.tokenize import tokenize
 
@@ -22,8 +23,22 @@ from findex.tokenize import tokenize
 PARA_RE = re.compile(r"\n\s*\n")
 
 
+def split_paragraphs(text):
+    """Генератор (k, start, end) - номер абзацу і його межі в тексті.
+
+    Те саме, що PARA_RE.split(text), але ще знаємо де абзац лежить (для сніпетів).
+    """
+    start = 0
+    k = 0
+    for m in PARA_RE.finditer(text):
+        yield k, start, m.start()
+        start = m.end()
+        k += 1
+    yield k, start, len(text)
+
+
 def iter_units(root, unit="para"):
-    """Генератор (path, title, text).
+    """Генератор (path, title, text, start, end).
 
     unit="book" - одна книга = один документ (як в Lab 1, але тоді документів лише 18).
     unit="para" - один абзац = один документ (так індекс схожий на справжній).
@@ -31,16 +46,21 @@ def iter_units(root, unit="para"):
     for doc in iter_documents(root):
         path = str(doc.path)  # один рядок на книгу, а не новий на кожен абзац
         if unit == "book":
-            yield path, doc.path.stem, doc.text
+            yield path, doc.path.stem, doc.text, 0, len(doc.text)
             continue
-        for k, para in enumerate(PARA_RE.split(doc.text)):
-            para = para.strip()
-            if not para:
+        for k, start, end in split_paragraphs(doc.text):
+            para = doc.text[start:end]
+            stripped = para.strip()
+            if not stripped:
                 continue
-            first_line = para.splitlines()[0][:60]
-            yield path, f"{doc.path.name} #{k}: {first_line}", para
+            # зсуваємо межі, щоб не було пробілів на краях
+            start = start + (len(para) - len(para.lstrip()))
+            end = start + len(stripped)
+            first_line = stripped.splitlines()[0][:60]
+            yield path, f"{doc.path.name} #{k}: {first_line}", stripped, start, end
 
 
+@timed
 def build_index(root, unit="para", kind="slots", positions=False):
     """Будує індекс за один прохід по корпусу.
 
@@ -54,7 +74,7 @@ def build_index(root, unit="para", kind="slots", positions=False):
         raise ValueError("positions are not supported for kind='array'")
 
     if kind == "array":
-        # дві паралельні масиви: doc_ids і tfs, по 4 байти на число
+        # два паралельні масиви: doc_ids і tfs, по 4 байти на число
         postings = defaultdict(lambda: (array("I"), array("I")))
     else:
         postings = defaultdict(list)
@@ -63,7 +83,7 @@ def build_index(root, unit="para", kind="slots", positions=False):
     doc_lengths = {}
     doc_meta = {}
 
-    for doc_id, (path, title, text) in enumerate(iter_units(root, unit)):
+    for doc_id, (path, title, text, start, end) in enumerate(iter_units(root, unit)):
         if positions:
             # терм -> список номерів токенів
             pos = defaultdict(list)
@@ -85,11 +105,11 @@ def build_index(root, unit="para", kind="slots", positions=False):
                     postings[term].append(posting_cls(doc_id, tf))
 
         doc_lengths[doc_id] = n_tokens
-        doc_meta[doc_id] = DocMeta(path, title)
+        doc_meta[doc_id] = DocMeta(path, title, start, end)
 
     # звичайний dict: defaultdict з lambda не можна запікліти,
     # і щоб пошук неіснуючого терма не додавав порожні списки
-    return Index(dict(postings), doc_lengths, doc_meta, kind)
+    return Index(dict(postings), doc_lengths, doc_meta, kind, positions)
 
 
 def main():
@@ -102,7 +122,8 @@ def main():
     parser.add_argument("--kind", choices=["plain", "slots", "array"], default="slots")
     parser.add_argument("--positions", action="store_true")
     args = parser.parse_args()
-    logging.basicConfig(level=logging.ERROR)
+    logging.basicConfig(level=logging.INFO, format="[%(name)s] %(message)s")
+    logging.getLogger("findex.corpus").setLevel(logging.ERROR)
 
     tracemalloc.start()
     start = time.perf_counter()
@@ -115,10 +136,9 @@ def main():
     save(index, args.out)
     save_time = time.perf_counter() - start
 
-    print("documents:", len(index.doc_meta))
-    print("terms:", len(index.postings))
+    print(index)
     print("postings:", index.num_postings())
-    print(f"build: {build_time:.2f} s")
+    print(f"build: {build_time:.2f} s (з tracemalloc)")
     print(f"peak memory (build): {peak / 1024 / 1024:.1f} MB")
     print(f"save: {save_time:.2f} s -> {args.out} ({args.out.stat().st_size / 1024 / 1024:.1f} MB)")
 

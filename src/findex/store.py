@@ -8,8 +8,10 @@
 import json
 import pickle
 from array import array
+from contextlib import contextmanager
 from pathlib import Path
 
+from findex.decorators import timed
 from findex.models import DocMeta, Index, PlainPosting, Posting
 
 # УВАГА: pickle.load виконує код!
@@ -27,11 +29,27 @@ def save(index, path):
         save_pickle(index, path)
 
 
+@timed
 def load(path):
     path = Path(path)
     if path.suffix == ".json":
         return load_json(path)
     return load_pickle(path)
+
+
+@contextmanager
+def open_index(path):
+    """with open_index("index.bin") as ix: ...
+
+    Все до yield - це __enter__, все після - __exit__.
+    finally спрацює і коли блок with закінчився нормально, і коли був return,
+    і коли був виняток. Виняток ми не ковтаємо, він піде далі.
+    """
+    index = load(path)
+    try:
+        yield index
+    finally:
+        index.close()
 
 
 # ---------- pickle ----------
@@ -69,9 +87,10 @@ def save_json(index, path):
 
     data = {
         "kind": index.kind,
+        "positions": index.positions,
         "postings": postings,
         "doc_lengths": index.doc_lengths,
-        "doc_meta": {d: [m.path, m.title] for d, m in index.doc_meta.items()},
+        "doc_meta": {d: [m.path, m.title, m.start, m.end] for d, m in index.doc_meta.items()},
     }
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, separators=(",", ":"))
@@ -99,5 +118,5 @@ def load_json(path):
             postings[term] = plist
 
     doc_lengths = {int(d): n for d, n in data["doc_lengths"].items()}
-    doc_meta = {int(d): DocMeta(p, t) for d, (p, t) in data["doc_meta"].items()}
-    return Index(postings, doc_lengths, doc_meta, kind)
+    doc_meta = {int(d): DocMeta(*m) for d, m in data["doc_meta"].items()}
+    return Index(postings, doc_lengths, doc_meta, kind, data["positions"])

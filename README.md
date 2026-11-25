@@ -193,3 +193,200 @@ peak memory: 381.3 MB
 - `¶` у заголовках у консолі Windows виводився кракозябрами, замінив на `#`.
 - Перший варіант бенчмарку брав рідкий терм `1816` з doc_id 0, і merge виглядав у 4000 разів швидшим. Додав випадок, де рідкий терм в кінці, — там уже виграє set.
 - Stretch (mmap-формат, gap encoding) не робив.
+
+## Lab 03 — ранжування і модель об'єктів: dunder-методи, протоколи, декоратори
+
+### Що зроблено
+
+- `src/findex/models.py` — `Index` тепер клас, наслідує `collections.abc.Mapping[str, list[Posting]]`: `len`, `in`, `index[term]`, `for t in index`, `repr`, плюс `num_docs` (property), `avg_doc_length` (cached_property), `doc_length()`, `df()`, `close()`. У `DocMeta` додались `start`/`end` — де абзац лежить у файлі книги (для сніпетів)
+- `src/findex/store.py` — `open_index(path)`, context manager через `@contextmanager`
+- `src/findex/scoring.py` — протокол `Scorer` (`typing.Protocol`), `TfIdf` і `BM25(k1=1.5, b=0.75)`
+- `src/findex/query.py` — лексер + парсер рекурсивним спуском, вузли `Term`, `Phrase`, `And`, `Or`, `Not` з `&`, `|`, `~` і `evaluate(index)`
+- `src/findex/search.py` — `Searcher.search(query, scorer, k)`: булевий фільтр → бали → `heapq.nlargest`, результат — `SearchResult` з `order=True`; CLI
+- `src/findex/decorators.py` — `@timed` (з `functools.wraps`)
+- `src/findex/snippet.py` — сніпети з підсвіткою
+- `src/findex/merge.py` — merge / set з Lab 2 переїхали сюди (щоб не було циклічного імпорту `search` ↔ `query`)
+- `scripts/sanity.py` — три перевірки ранжування, `scripts/evaluate.py` + `scripts/qrels.json` — precision@5, `scripts/experiments_lab3.py` — експерименти
+- `tests/test_lab3.py` — 31 новий тест (всього 61)
+
+Старі `index*.bin` з Lab 2 треба перебудувати: там запікльований старий клас `Index`.
+
+### Запуск
+
+```
+uv run python -m pytest
+uv run python -m findex.index data/ --out index_pos.bin --positions
+uv run python -m findex.search index_pos.bin '(ahab OR starbuck) "white whale" NOT ship'
+uv run python -m findex.search index_pos.bin "captain ahab" --scorer tfidf -k 3
+uv run python -m findex.search index_pos.bin --color          (інтерактивний режим, порожній рядок - вихід)
+uv run python scripts/sanity.py index_pos.bin
+uv run python scripts/evaluate.py index_pos.bin
+uv run python scripts/experiments_lab3.py
+```
+
+Фрази працюють тільки з індексом, збудованим з `--positions` (інакше `query error: phrase search needs an index built with --positions`). `-k` — скільки результатів показати (замість `--limit` з Lab 2), `-q` — без логів.
+
+### Index як об'єкт
+
+```python
+>>> from findex.store import open_index
+>>> with open_index("index_pos.bin") as ix:
+...     print(ix, len(ix), "whale" in ix, ix.df("whale"), round(ix.avg_doc_length, 1))
+...     print(ix["whale"][:2])
+Index(terms=48_249, docs=47_887, kind='slots') 48249 True 595 45.4
+[Posting(doc_id=15385, tf=1, positions=(8,)), Posting(doc_id=22385, tf=1, positions=(64,))]
+>>> ix.closed, len(ix)
+(True, 0)
+```
+
+Від `Mapping` безкоштовно є `keys()`, `items()`, `values()`, `get()`. `__eq__` повертає `NotImplemented` для чужих типів. `open_index` закриває індекс у `finally`, тобто і при винятку всередині `with` (є тест `test_open_index_exception`).
+
+### Мова запитів
+
+```
+or_expr  := and_expr ("OR" and_expr)*
+and_expr := not_expr (["AND"] not_expr)*
+not_expr := "NOT" not_expr | atom
+atom     := слово | "фраза" | "(" or_expr ")"
+```
+
+AND сильніше за OR, бо `and_expr` сидить усередині `or_expr`: парсер спочатку збирає `b c` в And, а вже потім бачить OR. Тому `a OR b c` = `Or(a, And(b, c))`. Тести порівнюють дерева, а не рядки:
+
+```python
+assert parse("a OR b c") == Or(Term("a"), And(Term("b"), Term("c")))
+assert parse('python AND (async OR await) NOT java "event loop"') == And(
+    And(And(Term("python"), Or(Term("async"), Term("await"))), Not(Term("java"))),
+    Phrase(("event", "loop")),
+)
+assert Term("a") & (Term("b") | Term("c")) & ~Term("d") == parse("a (b OR c) NOT d")
+```
+
+Фраза: беремо документи, де є всі слова (merge AND), потім для кожного документа зсуваємо позиції першого слова на +1 і робимо merge AND з позиціями другого, і т.д. Якщо щось залишилось — фраза є. `a AND NOT b` рахується як `merge_not(a, b)`, без побудови доповнення до b.
+
+### Ранжування
+
+Бали рахуються тільки для документів, які пройшли булевий фільтр, по всіх "позитивних" термах запиту (те, що під NOT, не рахується). Для кожного терма йдемо по postings і робимо `scores[doc_id] += scorer(term, posting, index)`, потім `heapq.nlargest(k, ...)` — O(n log k) замість O(n log n) у `sorted(...)[:k]`.
+
+- TF-IDF: `tf · log(N / df)`
+- BM25: `idf · tf·(k1+1) / (tf + k1·(1 − b + b·dl/avgdl))`, `idf = log(1 + (N − df + 0.5)/(df + 0.5))`
+
+`Scorer` — це `Protocol` з `__call__(term, posting, index) -> float`, тому підходять і `TfIdf()`, і `BM25()`, і звичайна функція. `avg_doc_length` — `cached_property`, бо BM25 питає його для кожного posting.
+
+### Три перевірки на корпусі (`scripts/sanity.py`)
+
+**1. Рідкий терм вище частого.** Запит `the OR leviathan`: df(`the`) = 35 572, idf = 0.30; df(`leviathan`) = 81, idf = 6.38.
+
+| | Найкращий документ | BM25 | Місце |
+|---|---|---:|---:|
+| тільки `leviathan` | melville-moby_dick.txt #32: "By art is created that great Leviathan..." | 10.56 | 1 |
+| тільки `the` | whitman-leaves.txt #677: I see the long river-stripes of the earth, | 0.67 | 80 |
+
+Найгірший документ тільки з `leviathan` має 7.99 — все одно вище за найкращий тільки з `the` (0.67). Всі документи з `leviathan` стоять вище за всі, де є тільки `the`.
+
+**2. 20-те повторення майже нічого не додає.** Терм `whale`, документ середньої довжини (45 токенів, avgdl = 45.4):
+
+| tf | BM25 | + за цей повтор | TF-IDF | + за цей повтор |
+|---:|---:|---:|---:|---:|
+| 1 | 4.404 | +4.404 | 4.39 | +4.39 |
+| 2 | 6.285 | +1.881 | 8.78 | +4.39 |
+| 3 | 7.328 | +1.043 | 13.16 | +4.39 |
+| 5 | 8.449 | +0.459 | 21.94 | +4.39 |
+| 10 | 9.545 | +0.136 | 43.88 | +4.39 |
+| 19 | 10.170 | +0.041 | 83.37 | +4.39 |
+| 20 | 10.207 | +0.037 | 87.76 | +4.39 |
+
+У BM25 20-й повтор дає +0.037 — це 0.8% від першого. Межа при tf → ∞ — idf·(k1+1) = 11.0. У TF-IDF кожен повтор дає однаково, тому документ з 20 `whale` у 20 разів "кращий" за документ з одним. (На корпусі найбільше `whale` в одному абзаці — 13, у `melville-moby_dick.txt #723`.)
+
+**3. Короткий документ вище довгого.** Обидва з одним `whale`:
+
+| Документ | Довжина | tf | BM25 | TF-IDF |
+|---|---:|---:|---:|---:|
+| melville-moby_dick.txt #1898: "WHAT whale?" | 2 | 1 | 7.70 | 4.39 |
+| melville-moby_dick.txt #2615: "Oh, Starbuck! it is a mild, mild wind..." | 523 | 1 | 0.76 | 4.39 |
+
+TF-IDF довжину не бачить (однаковий бал), BM25 дає короткому в 10 разів більше. З `b = 0` різниці не було б (є тест).
+
+### @timed і кеш
+
+`@timed` стоїть на `build_index`, `load`, `Searcher.search` і `Searcher._match`. `lru_cache(maxsize=256)` — на шляху "дерево запиту → doc_ids" (`Searcher.match`). Ключ кешу — саме дерево (frozen dataclass, хешується), тому `a  b` і `a b` — один і той самий запис. Лог з двома однаковими запитами (другий з іншими пробілами):
+
+```
+> uv run python -m findex.search index_pos.bin '(ahab OR starbuck) "white whale" NOT ship' '(ahab OR starbuck)  "white whale" NOT ship' 'captain ahab' -k 3
+  [findex.timed] load took 3715.1 ms
+Index(terms=48_249, docs=47_887, kind='slots') loaded in 3.72 s
+  [findex.timed] Searcher._match took 0.5 ms
+  [findex.search] match (((ahab OR starbuck) AND "white whale") AND NOT ship) -> 38 docs (cache miss)
+  [findex.timed] Searcher.search took 1.1 ms
+query: (((ahab OR starbuck) AND "white whale") AND NOT ship)   scorer: BM25(k1=1.5, b=0.75)
+ 1. [ 21.21] melville-moby_dick.txt #2319: "Hast seen the White Whale?" gritted Ahab in reply.
+    "Hast seen the **White** **Whale**?" gritted **Ahab** in reply.
+ 2. [ 20.27] melville-moby_dick.txt #813: "Moby Dick?" shouted Ahab.  "Do ye know the white whale then
+    "Moby Dick?" shouted **Ahab**. "Do ye know the **white** **whale** then, Tash?"
+ 3. [ 19.98] melville-moby_dick.txt #1519: "Hast thou seen the White Whale?" demanded Ahab, when the bo
+    "Hast thou seen the **White** **Whale**?" demanded **Ahab**, when the boat drifted back.
+
+  [findex.search] match (((ahab OR starbuck) AND "white whale") AND NOT ship) -> 38 docs (cache hit)
+  [findex.timed] Searcher.search took 0.3 ms
+  ...
+  [findex.timed] Searcher._match took 0.2 ms
+  [findex.search] match (captain AND ahab) -> 77 docs (cache miss)
+  [findex.timed] Searcher.search took 0.4 ms
+  ...
+CacheInfo(hits=1, misses=2, maxsize=256, currsize=2)
+```
+
+На другому запиті немає рядка `Searcher._match took` — функція взагалі не викликалась, відповідь взята з кешу.
+
+### Сніпети
+
+Вікно ±80 символів навколо "найкращого" входження — того, навколо якого у вікні найбільше різних термів запиту. Текст абзацу читається з файлу книги за `DocMeta.start/end` (книги кешуються `lru_cache`). Токени шукаються тією ж регуляркою, що в `tokenize`, але в тексті без `casefold`, щоб позиції збігались з оригіналом. Підсвітка — `**слово**`, з `--color` — жовтим (ANSI). Приклад для довгого абзацу (`captain ahab --scorer tfidf -k 1`):
+
+```
+query: (captain AND ahab)   scorer: TfIdf()
+ 1. [ 41.18] melville-moby_dick.txt #434: "Come hither to me--hither, hither," said Peleg, with a sign
+    ...e. "Look ye, lad; never say that on board the Pequod. Never say it anywhere. **Captain** **Ahab** did not name himself. 'Twas a foolish, ignorant whim of his crazy, widowe...
+```
+
+### Оцінка: precision@5
+
+10 запитів, для кожного розмічені руками документи з об'єднання топ-10 TF-IDF і топ-10 BM25 (`scripts/evaluate.py --pool`), розмітка в `scripts/qrels.json`. Критерій: документ релевантний, якщо він **про** те, що питається (описує героя / сцену / стосунки), а не просто згадує обидва слова.
+
+| # | Запит | Що шукаю | Релевантних | P@5 TF-IDF | P@5 BM25 |
+|---:|---|---|---:|---:|---:|
+| 1 | `white whale` | опис Мобі Діка, ставлення до нього | 9 | 0.8 | 0.0 |
+| 2 | `captain ahab` | що розповідають про Ахава | 8 | 0.8 | 0.0 |
+| 3 | `alice rabbit` | сцени Аліси з Кроликом | 12 | 1.0 | 1.0 |
+| 4 | `hamlet ghost` | Гамлет і Привид | 7 | 1.0 | 1.0 |
+| 5 | `lady macbeth` | сцени леді Макбет | 5 | 1.0 | 1.0 |
+| 6 | `father brown` | що робить / який отець Браун | 9 | 1.0 | 0.0 |
+| 7 | `emma harriet` | стосунки Емми і Гаррієт | 13 | 1.0 | 0.2 |
+| 8 | `brutus OR cassius` | Брут / Кассій у дії | 14 | 1.0 | 0.2 |
+| 9 | `anne wentworth` | Енн і капітан Вентворт | 14 | 0.8 | 0.6 |
+| 10 | `jesus disciples` | Ісус з учнями | 18 | 1.0 | 1.0 |
+| | **середнє** | | | **0.94** | **0.50** |
+
+Несподівано: BM25 програв. Причина видно з `--pool`: документ = абзац, середня довжина 45 токенів, а в книгах купа діалогових рядків на 2–6 слів (`"Captain Ahab."`, `"Father Brown?" she said.`, `Manet Brutus and Cassius.`). Нормалізація довжини з `b = 0.75` дає таким рядкам величезний бонус (як у перевірці 3: 2 токени → 7.70, 523 токени → 0.76), і весь топ-5 BM25 займають одно-рядкові репліки, де обидва слова є, але інформації нуль. TF-IDF з сирим `tf` навпаки любить довгі абзаци з багатьма повторами — а за моїм критерієм саме вони "про" героя. На запитах, де всі збіги і так змістовні (Аліса, Гамлет, Біблія), обидва дають 1.0.
+
+Те саме з різним `b` (документи, яких немає в розмітці, рахуються нерелевантними, тому це тільки приблизно):
+
+| BM25 b | 0.75 | 0.5 | 0.3 | 0.0 |
+|---|---:|---:|---:|---:|
+| P@5 | 0.50 | 0.56 | 0.76 | 0.94 |
+
+Тобто для такого корпусу (дуже різні довжини абзаців, багато коротких реплік) `b` треба брати меншим. Вибірка маленька (10 запитів, розмічав сам), тому висновок шумний — але звичка міряти ранжування якраз для цього.
+
+### Експерименти (`scripts/experiments_lab3.py`)
+
+- `len(V())` без `__len__` → `TypeError: object of type 'V' has no len()`. З `__len__ = 3`: `len = 3`, `bool = True` — `bool()` шукає `__bool__`, а якщо його немає, бере `__len__() != 0`. З `__len__ = 0` → `False`.
+- Декоратор без `functools.wraps`: `search.__name__ == "wrapper"`, `__doc__ = None`. З `wraps`: `search`, `Шукає q.`
+- `dis`: `len(x)` — це `LOAD_GLOBAL len`, `LOAD_GLOBAL x`, `CALL 1`; `x.__len__()` — `LOAD_ATTR __len__`, `CALL 0`. `len()` для списку одразу бере довжину з C-структури, а `x.__len__()` спочатку шукає атрибут і створює bound method. 1 млн викликів: `len(list)` 0.019 s, `list.__len__()` 0.036 s.
+- `@lru_cache` зі списком → `TypeError: unhashable type: 'list'` (ключ кешу — це хеш аргументів), з tuple працює.
+- `@contextmanager`: при `return` всередині `with` і при винятку `exit` друкується (бо `finally`), виняток йде далі.
+
+### Проблеми
+
+- Lab 2 `search.py` імпортував би `query.py`, а `query.py` — merge-функції з `search.py`: циклічний імпорт. Виніс merge/set в `merge.py`.
+- `heapq.nlargest` при однакових балах зберігає порядок вставки, і тест `results == sorted(results, reverse=True)` падав (при рівних балах `sorted` ставить більший `doc_id` першим). Зробив ключ `(score, -doc_id)`: при рівних балах вище менший `doc_id`, результат стабільний.
+- Логи `@timed` йдуть в stderr, а результати в stdout, тому при перенаправленні у файл вони перемішуються не по порядку. Для прикладу в README запускав з `python -u`.
+- Для сніпетів потрібен текст абзацу, а в індексі його немає. Зберігати тексти — +12 MB, тому зберігаю тільки `start/end` у файлі книги і читаю книгу при показі. Для цього `PARA_RE.split` замінив на `finditer`, щоб знати межі.
+- Stretch (`ResultList` як `Sequence`, `explain` через `singledispatch`) не робив.
