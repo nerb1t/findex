@@ -1,6 +1,6 @@
 [project]
 name = "findex"
-version = "0.4.0"
+version = "0.5.0"
 description = "findex — a small search engine built step by step (Python course)"
 authors = [{ name = "Ilia Shevel" }]
 keywords = ["search", "inverted-index", "bm25", "cli"]
@@ -26,6 +26,8 @@ build-backend = "uv_build"
 [dependency-groups]
 dev = [
     "hypothesis>=6.170.17",
+    "matplotlib>=3.11.2",
+    "psutil>=7.2.2",
     "pyright>=1.1.414",
     "pytest>=9.2.0",
     "pytest-cov>=7.1.0",
@@ -38,6 +40,10 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+# у скриптах бенчмарків довгі рядки - це шапки markdown-таблиць
+"scripts/*" = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -15,3 +15,4 @@ dist/
 index*.json
 .coverage
 htmlcov/
+.venv-*/

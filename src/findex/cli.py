@@ -20,9 +20,10 @@ from rich.progress import BarColumn, DownloadColumn, Progress, TextColumn, TimeE
 from rich.table import Table
 from rich.text import Text
 
-from findex.index import Unit, build_index
+from findex.index import Unit
 from findex.merge import Engine
 from findex.models import Index, Kind
+from findex.parallel import DEFAULT_CHUNK_KB, ExecutorName, Task, build_index_parallel
 from findex.query import QueryError, parse
 from findex.scoring import ScorerName, make_scorer
 from findex.search import Searcher
@@ -101,6 +102,15 @@ def index_cmd(
     limit: Annotated[int | None, typer.Option(help="Взяти тільки перші N книг")] = None,
     unit: Annotated[Unit, typer.Option(help="Документ = абзац або книга")] = "para",
     kind: Annotated[Kind, typer.Option(help="Як зберігати postings")] = "slots",
+    executor: Annotated[
+        ExecutorName, typer.Option(help="Як паралелити: цикл, потоки або процеси")
+    ] = "processes",
+    workers: Annotated[
+        int | None, typer.Option(min=1, help="Скільки воркерів (типово min(8, os.cpu_count()))")
+    ] = None,
+    chunk_kb: Annotated[
+        int, typer.Option(min=1, help="Розмір однієї задачі, КБ тексту")
+    ] = DEFAULT_CHUNK_KB,
 ) -> None:
     """Будує індекс з корпусу і зберігає у файл."""
     if kind == "array" and positions:
@@ -120,10 +130,13 @@ def index_cmd(
     with progress:
         task = progress.add_task("indexing", total=sum(f.stat().st_size for f in files))
 
-        def on_book(path: Path) -> None:
-            progress.update(task, advance=path.stat().st_size, description=path.name)
+        def on_done(t: Task) -> None:
+            size = t.path.stat().st_size / t.parts
+            progress.update(task, advance=size, description=t.path.name)
 
-        index = build_index(corpus, unit, kind, positions, limit, on_book)
+        index = build_index_parallel(
+            corpus, executor, workers, unit, kind, positions, limit, chunk_kb, on_done
+        )
     build_time = time.perf_counter() - start
 
     save(index, out_path)

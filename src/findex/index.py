@@ -56,11 +56,15 @@ def split_paragraphs(text: str) -> Iterator[tuple[int, int, int]]:
     yield k, start, len(text)
 
 
-def iter_units(docs: Iterable[Document], unit: Unit = "para") -> Iterator[TextUnit]:
+def iter_units(
+    docs: Iterable[Document], unit: Unit = "para", part: int = 0, parts: int = 1
+) -> Iterator[TextUnit]:
     """Книги -> документи для індексу.
 
     unit="book" - одна книга = один документ (як в Lab 1, але тоді документів лише 18).
     unit="para" - один абзац = один документ (так індекс схожий на справжній).
+    part/parts - взяти тільки part-ту з parts частин абзаців книги (для паралельної
+    збірки, Lab 5). Номери абзаців #k при цьому ті самі, що й без поділу.
     """
     for doc in docs:
         # абсолютний шлях: сніпети читають файл книги, а findex може бути запущений
@@ -69,7 +73,10 @@ def iter_units(docs: Iterable[Document], unit: Unit = "para") -> Iterator[TextUn
         if unit == "book":
             yield TextUnit(path, doc.path.stem, doc.text, 0, len(doc.text))
             continue
-        for k, start, end in split_paragraphs(doc.text):
+        paras = list(split_paragraphs(doc.text))
+        lo = len(paras) * part // parts
+        hi = len(paras) * (part + 1) // parts
+        for k, start, end in paras[lo:hi]:
             para = doc.text[start:end]
             stripped = para.strip()
             if not stripped:
