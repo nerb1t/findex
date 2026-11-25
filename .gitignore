@@ -9,3 +9,7 @@ __pycache__/
 .ruff_cache/
 *.egg-info/
 dist/
+
+# індекси (генеруються)
+*.bin
+index*.json
