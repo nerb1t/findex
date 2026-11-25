@@ -71,7 +71,7 @@ def iter_units(
         # з іншої папки. Один рядок на книгу, а не новий на кожен абзац
         path = str(doc.path.resolve())
         if unit == "book":
-            yield TextUnit(path, doc.path.stem, doc.text, 0, len(doc.text))
+            yield TextUnit(path, doc.title or doc.path.stem, doc.text, 0, len(doc.text))
             continue
         paras = list(split_paragraphs(doc.text))
         lo = len(paras) * part // parts
@@ -85,7 +85,8 @@ def iter_units(
             start = start + (len(para) - len(para.lstrip()))
             end = start + len(stripped)
             first_line = stripped.splitlines()[0][:60]
-            yield TextUnit(path, f"{doc.path.name} #{k}: {first_line}", stripped, start, end)
+            name = doc.title or doc.path.name  # сторінка з краулера - її <title>
+            yield TextUnit(path, f"{name} #{k}: {first_line}", stripped, start, end)
 
 
 def build_index_from_units(

@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final, Literal
 
-from findex.corpus import Document, read_text
+from findex.corpus import corpus_files, iter_file
 from findex.decorators import timed
 from findex.index import Unit, iter_units
 from findex.models import (
@@ -83,7 +83,7 @@ def make_tasks(
     tasks: list[Task] = []
     for path in paths:
         parts = 1
-        if unit == "para":
+        if unit == "para" or path.suffix == ".jsonl":
             parts = max(1, round(path.stat().st_size / (chunk_kb * 1024)))
         tasks.extend(Task(path, i, parts) for i in range(parts))
     return tasks
@@ -97,13 +97,21 @@ def build_partial(
     Нічого спільного з іншими воркерами: свої dict, свій Counter - гонитв немає.
     """
     start = time.thread_time()  # CPU саме цього потоку (у процесі-воркері це теж потік)
-    doc = Document(0, task.path, read_text(task.path))
+    if task.path.suffix == ".jsonl":
+        # сторінки краулера: ріжемо по сторінках (рядках файлу)
+        pages = list(iter_file(task.path))
+        lo = len(pages) * task.part // task.parts
+        hi = len(pages) * (task.part + 1) // task.parts
+        units = iter_units(pages[lo:hi], unit)
+    else:
+        # книга: ріжемо по абзацах
+        units = iter_units(iter_file(task.path), unit, task.part, task.parts)
 
     postings: defaultdict[str, ArrayPostings] = defaultdict(lambda: (array("I"), array("I")))
     pos_out: defaultdict[str, list[tuple[int, ...]]] = defaultdict(list)
     doc_lengths: list[int] = []
     doc_meta: list[DocMeta] = []
-    for local_id, u in enumerate(iter_units([doc], unit, task.part, task.parts)):
+    for local_id, u in enumerate(units):
         if positions:
             pos: defaultdict[str, list[int]] = defaultdict(list)
             n_tokens = 0
@@ -264,7 +272,7 @@ def build_index_parallel(
     if kind == "array" and positions:
         raise ValueError("positions are not supported for kind='array'")
     workers = workers or default_workers()
-    paths = sorted(Path(root).rglob("*.txt"))[:limit]
+    paths = corpus_files(Path(root))[:limit]
     tasks = make_tasks(paths, unit, chunk_kb)
     log.info(
         "%d files -> %d tasks, executor=%s, workers=%d", len(paths), len(tasks), executor, workers

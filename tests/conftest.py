@@ -35,4 +35,4 @@ def real_index() -> Index:
     """Індекс на 3 книгах справжнього корпусу (data/ не в git, тому може не бути)."""
     if not (DATA / "gutenberg").exists():
         pytest.skip("no data/ (run scripts/get_corpus.py)")
-    return build_index(DATA, positions=True, limit=3)
+    return build_index(DATA / "gutenberg", positions=True, limit=3)

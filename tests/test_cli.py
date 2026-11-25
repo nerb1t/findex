@@ -29,7 +29,7 @@ def test_help() -> None:
 def test_version() -> None:
     result = runner.invoke(app, ["--version"])
     assert result.exit_code == 0
-    assert result.stdout.startswith("findex 0.5")
+    assert result.stdout.startswith("findex 0.6")
 
 
 def test_index_cmd(ix_file: Path) -> None:
@@ -53,7 +53,7 @@ def test_index_bad_options(corpus: Path, tmp_path: Path) -> None:
 def test_index_empty_dir(tmp_path: Path) -> None:
     result = runner.invoke(app, ["index", str(tmp_path), "-o", str(tmp_path / "x.bin")])
     assert result.exit_code == 1
-    assert "no .txt files" in result.stderr
+    assert "no .txt/.jsonl files" in result.stderr
 
 
 def test_search_table(ix_file: Path) -> None:

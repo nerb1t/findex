@@ -1,6 +1,6 @@
 [project]
 name = "findex"
-version = "0.5.0"
+version = "0.6.0"
 description = "findex — a small search engine built step by step (Python course)"
 authors = [{ name = "Ilia Shevel" }]
 keywords = ["search", "inverted-index", "bm25", "cli"]
@@ -11,6 +11,7 @@ classifiers = [
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "httpx>=0.28.1",
     "rich>=15.0.0",
     "typer>=0.29.2",
 ]

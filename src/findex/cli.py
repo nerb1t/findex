@@ -6,20 +6,27 @@
 - очікувана помилка (немає файлу, поганий запит) - один рядок і код виходу 1, без traceback
 """
 
+import asyncio
 import json
 import logging
 import time
+from dataclasses import asdict
+from datetime import datetime
 from importlib.metadata import version
 from pathlib import Path
 from typing import Annotated, NoReturn
 
 import typer
 from rich.console import Console
+from rich.live import Live
 from rich.logging import RichHandler
 from rich.progress import BarColumn, DownloadColumn, Progress, TextColumn, TimeElapsedColumn
 from rich.table import Table
 from rich.text import Text
 
+from findex.corpus import corpus_files
+from findex.crawler.crawl import CrawlStats, crawl
+from findex.crawler.fetch import FetchResult
 from findex.index import Unit
 from findex.merge import Engine
 from findex.models import Index, Kind
@@ -60,6 +67,8 @@ def setup_logging(verbose: int) -> None:
     handler = RichHandler(console=err, show_time=False, show_path=False)
     # force=True - щоб повторний виклик (наприклад, у тестах) перезаписав налаштування
     logging.basicConfig(level=level, format="%(name)s: %(message)s", handlers=[handler], force=True)
+    # httpx пише рядок на КОЖЕН запит - показуємо це тільки з -vv
+    logging.getLogger("httpx").setLevel(logging.DEBUG if verbose >= 2 else logging.WARNING)
 
 
 def version_callback(value: bool) -> None:
@@ -93,7 +102,7 @@ def open_or_fail(path: Path) -> Index:
 @app.command("index")
 def index_cmd(
     corpus: Annotated[
-        Path, typer.Argument(exists=True, file_okay=False, help="Папка з .txt файлами")
+        Path, typer.Argument(exists=True, help="Папка з .txt/.jsonl або один файл (crawl.jsonl)")
     ],
     out_path: Annotated[
         Path, typer.Option("--out", "-o", help=".bin = pickle, .json = json")
@@ -115,9 +124,9 @@ def index_cmd(
     """Будує індекс з корпусу і зберігає у файл."""
     if kind == "array" and positions:
         fail("--positions does not work with --kind array")
-    files = sorted(corpus.rglob("*.txt"))[:limit]
+    files = corpus_files(corpus)[:limit]
     if not files:
-        fail(f"no .txt files in {corpus}")
+        fail(f"no .txt/.jsonl files in {corpus}")
 
     start = time.perf_counter()
     progress = Progress(
@@ -231,3 +240,114 @@ def stats_cmd(
         for i, (term, count) in enumerate(st.top, 1):
             terms.add_row(str(i), Text(term), f"{count:,}")
         out.print(terms)
+
+
+@app.command("crawl")
+def crawl_cmd(
+    seeds: Annotated[list[str], typer.Argument(help="Стартові URL")],
+    max_pages: Annotated[int, typer.Option(min=1, help="Стеля: скільки сторінок зібрати")] = 500,
+    concurrency: Annotated[int, typer.Option(min=1, help="Запитів одночасно (усього)")] = 10,
+    per_host: Annotated[int, typer.Option(min=1, help="Запитів одночасно на один хост")] = 2,
+    delay: Annotated[
+        float, typer.Option(min=0, help="Мін. пауза між запитами до одного хоста, s")
+    ] = 0.5,
+    out_path: Annotated[Path, typer.Option("--out", "-o", help="JSON lines зі сторінками")] = Path(
+        "data/crawl.jsonl"
+    ),
+    log_path: Annotated[
+        Path | None, typer.Option("--log", help="Лог по кожному URL (типово crawl.log поруч)")
+    ] = None,
+    allow_domain: Annotated[
+        list[str] | None, typer.Option(help="Дозволений домен (типово - домени seeds)")
+    ] = None,
+    timeout: Annotated[float, typer.Option(min=0.1, help="Таймаут одного запиту, s")] = 10.0,
+    debug_loop: Annotated[
+        bool, typer.Option(help="asyncio debug: попередження, якщо щось блокує цикл > 100 мс")
+    ] = False,
+) -> None:
+    """Обходить сайт і пише сторінки в JSON lines (потім: findex index data/crawl.jsonl)."""
+    if log_path is None:
+        log_path = out_path.parent / "crawl.log"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        stats = asyncio.run(
+            _crawl_to_file(
+                seeds,
+                out_path,
+                log_path,
+                max_pages,
+                concurrency,
+                per_host,
+                delay,
+                allow_domain,
+                timeout,
+            ),
+            debug=debug_loop,
+        )
+    except ValueError as e:
+        fail(str(e))
+    out.print(
+        f"{stats.pages} pages -> {out_path} in {stats.elapsed:.1f} s "
+        f"({stats.pages_per_s:.1f} pages/s), {stats.requests} requests, "
+        f"{stats.errors} errors, {stats.skipped} skipped; log: {log_path}"
+    )
+
+
+def _crawl_table(st: CrawlStats) -> Table:
+    table = Table(title="findex crawl", show_header=False)
+    table.add_column(style="bold")
+    table.add_column(justify="right")
+    table.add_row("pages", f"{st.pages:,}")
+    table.add_row("pages/s", f"{st.pages_per_s:.1f}")
+    table.add_row("in flight", str(st.in_flight))
+    table.add_row("queue", f"{st.queued:,}")
+    table.add_row("errors", str(st.errors))
+    table.add_row("skipped", str(st.skipped))
+    table.add_row("elapsed", f"{st.elapsed:.1f} s")
+    return table
+
+
+async def _crawl_to_file(
+    seeds: list[str],
+    out_path: Path,
+    log_path: Path,
+    max_pages: int,
+    concurrency: int,
+    per_host: int,
+    delay: float,
+    allow_domain: list[str] | None,
+    timeout: float,
+) -> CrawlStats:
+    stats = CrawlStats()
+    # файли відкриваємо один раз. Запис рядка в буфер - мікросекунди, цикл не блокує
+    with (
+        open(out_path, "w", encoding="utf-8") as pages_f,
+        open(log_path, "w", encoding="utf-8") as log_f,
+        Live(get_renderable=lambda: _crawl_table(stats), console=err, refresh_per_second=4),
+    ):
+        log_f.write("time\tstatus\tbytes\tms\tattempts\turl\tnote\n")
+
+        def on_result(res: FetchResult, note: str) -> None:
+            if res.final_url != res.url:
+                note = (note + " " if note else "") + f"-> {res.final_url}"
+            when = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+            log_f.write(
+                f"{when}\t{res.status}\t{res.nbytes}\t{res.elapsed * 1000:.0f}\t"
+                f"{res.attempts}\t{res.url}\t{note}\n"
+            )
+
+        pages = crawl(
+            seeds,
+            max_pages=max_pages,
+            concurrency=concurrency,
+            per_host=per_host,
+            delay=delay,
+            allowed_domains=allow_domain,
+            timeout=timeout,
+            stats=stats,
+            on_result=on_result,
+        )
+        async for page in pages:  # сторінки йдуть потоком - у пам'яті їх немає
+            pages_f.write(json.dumps(asdict(page), ensure_ascii=False) + "\n")
+            pages_f.flush()
+    return stats

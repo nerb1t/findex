@@ -3,9 +3,8 @@
 import logging
 from collections.abc import Iterable
 from functools import lru_cache
-from pathlib import Path
 
-from findex.corpus import read_text
+from findex.corpus import read_source
 from findex.models import DocMeta
 from findex.tokenize import TOKEN_RE, normalize
 
@@ -19,7 +18,7 @@ type Parts = list[tuple[str, bool]]
 @lru_cache(maxsize=32)
 def book_text(path: str) -> str:
     # книги всього 18, тому кешуємо, щоб не читати файл на кожен результат
-    return read_text(Path(path))
+    return read_source(path)
 
 
 def doc_text(meta: DocMeta) -> str:
