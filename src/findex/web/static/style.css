@@ -1,0 +1,82 @@
+:root {
+  --bg: #fbfaf7;
+  --fg: #1f1d1a;
+  --muted: #6b665e;
+  --line: #e6e1d8;
+  --accent: #8a3b12;
+  --mark: #ffe9a8;
+  --card: #ffffff;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #161514;
+    --fg: #ebe7e0;
+    --muted: #a39d93;
+    --line: #34312d;
+    --accent: #f0a46b;
+    --mark: #5a4513;
+    --card: #1e1c1a;
+  }
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code { font: 0.9em ui-monospace, "Cascadia Mono", Consolas, monospace; background: var(--line); padding: 0.05em 0.35em; border-radius: 4px; }
+mark { background: var(--mark); color: inherit; border-radius: 3px; padding: 0 0.1em; }
+
+.top {
+  position: sticky; top: 0; z-index: 1;
+  display: flex; gap: 1.25rem; align-items: center; flex-wrap: wrap;
+  padding: 0.9rem max(1rem, calc((100vw - 760px) / 2));
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
+  backdrop-filter: blur(6px);
+  border-bottom: 1px solid var(--line);
+}
+.brand { font: 700 1.5rem/1 Georgia, "Times New Roman", serif; color: var(--fg); letter-spacing: -0.02em; }
+.brand span { color: var(--accent); }
+.brand:hover { text-decoration: none; }
+.search { flex: 1; display: flex; gap: 0.5rem; min-width: 260px; }
+.search input, .search select, .search button {
+  font: inherit; color: var(--fg); background: var(--card);
+  border: 1px solid var(--line); border-radius: 10px; padding: 0.5rem 0.75rem;
+}
+.search input { flex: 1; min-width: 0; }
+.search input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.search button { background: var(--accent); color: var(--bg); border-color: var(--accent); cursor: pointer; font-weight: 600; }
+
+main { max-width: 760px; margin: 0 auto; padding: 1.5rem 1rem 3rem; }
+footer { max-width: 760px; margin: 0 auto; padding: 1.5rem 1rem 2.5rem; color: var(--muted); font-size: 0.85rem; border-top: 1px solid var(--line); }
+
+.hero h1 { font: 600 2rem/1.2 Georgia, "Times New Roman", serif; margin: 1.5rem 0 0.75rem; letter-spacing: -0.01em; }
+.hero p { color: var(--muted); }
+.examples a {
+  display: inline-block; margin: 0.25rem 0.35rem 0 0; padding: 0.15rem 0.65rem;
+  border: 1px solid var(--line); border-radius: 999px; background: var(--card); font-size: 0.9rem;
+}
+details { margin-top: 1.5rem; color: var(--muted); }
+summary { cursor: pointer; }
+
+.meta, .crumbs { color: var(--muted); font-size: 0.9rem; margin: 0 0 1.25rem; }
+.notice { padding: 0.75rem 1rem; border: 1px solid var(--accent); border-radius: 10px; }
+
+.results { list-style: none; padding: 0; margin: 0; counter-reset: none; }
+.results li { padding: 1rem 0; border-bottom: 1px solid var(--line); }
+.results .title { font: 600 1.1rem/1.35 Georgia, "Times New Roman", serif; }
+.results .where { color: var(--muted); font-size: 0.82rem; margin: 0.15rem 0 0.35rem; }
+.results .snippet { margin: 0; }
+
+.pager { display: flex; gap: 0.4rem; flex-wrap: wrap; align-items: center; margin-top: 1.5rem; }
+.pager a, .pager b, .pager span { padding: 0.25rem 0.6rem; border-radius: 8px; }
+.pager a { border: 1px solid var(--line); background: var(--card); }
+.pager b { background: var(--accent); color: var(--bg); }
+
+.doc { font: 1.1rem/1.75 Georgia, "Times New Roman", serif; }
+.doc p { margin: 0 0 1em; white-space: pre-line; }

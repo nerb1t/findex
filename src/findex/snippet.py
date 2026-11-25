@@ -91,3 +91,18 @@ def make_snippet(
 ) -> str:
     """Сніпет одним рядком, терми обгорнуті в before/after."""
     return "".join(before + s + after if hl else s for s, hl in snippet_parts(text, terms, width))
+
+
+def highlight_all(text: str, terms: Iterable[str]) -> Parts:
+    """Увесь текст шматками з підсвіченими термами (для сторінки документа)."""
+    text = normalize(text)
+    wanted = set(terms)
+    parts: Parts = []
+    pos = 0
+    for m in TOKEN_RE.finditer(text):
+        if m.group().casefold() in wanted:
+            parts.append((text[pos : m.start()], False))
+            parts.append((m.group(), True))
+            pos = m.end()
+    parts.append((text[pos:], False))
+    return [(s, hl) for s, hl in parts if s]

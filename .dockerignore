@@ -1,0 +1,17 @@
+# у контекст збірки - тільки те, що треба Dockerfile
+.git
+.github
+.venv
+.venv-*
+.pytest_cache
+.ruff_cache
+.coverage
+htmlcov
+__pycache__
+*.pyc
+data
+dist
+docs
+results
+tests
+*.bin

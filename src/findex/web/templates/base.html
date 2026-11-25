@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}findex{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔎</text></svg>">
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="/">find<span>ex</span></a>
+    <form class="search" action="/" method="get" role="search">
+      <input type="search" name="q" value="{{ q }}" placeholder='Напр. "white whale" ahab' aria-label="Запит" autocomplete="off" {% if autofocus %}autofocus{% endif %}>
+      <select name="scorer" aria-label="Формула балів">
+        <option value="bm25" {% if scorer != 'tfidf' %}selected{% endif %}>BM25</option>
+        <option value="tfidf" {% if scorer == 'tfidf' %}selected{% endif %}>TF-IDF</option>
+      </select>
+      <button type="submit">Шукати</button>
+    </form>
+  </header>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+  <footer>
+    findex — навчальна пошукова система (курс Python) ·
+    <a href="/docs">API (OpenAPI)</a> · <a href="/stats">статистика</a> ·
+    <a href="https://github.com/nerb1t/findex">код на GitHub</a>
+  </footer>
+</body>
+</html>

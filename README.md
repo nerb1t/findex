@@ -2,6 +2,8 @@
 
 [![CI](https://github.com/nerb1t/findex/actions/workflows/ci.yml/badge.svg)](https://github.com/nerb1t/findex/actions/workflows/ci.yml)
 
+**Онлайн:** ще не розгорнуто (див. Lab 07 → Деплой). Локально: `uv run findex serve --index index_pos.bin` → http://127.0.0.1:8000
+
 Пошукова система, яку робимо протягом курсу Python. Кожна лаба додає щось нове, тег `lab-01`, `lab-02` і т.д.
 
 ## Lab 01 — ітератори, генератори, корпус
@@ -808,3 +810,115 @@ crawl.log:  00:45:40.799  404  88  233  1  http://127.0.0.1:8001/missing.html
 - **Хаос «тільки з першої спроби»** спершу рахувався на сервері для кожного шляху, і після першого бенчмарку сервер уже не повертав 429/503. Тепер це випадкові 3%/2% на кожен запит.
 - `findex crawl` типово пише в `data/crawl.jsonl`, тож `findex index data/` тепер індексує і книги, і скачані сторінки (так і задумано: краулер поповнює корпус). Тест `real_index` довелося направити саме на `data/gutenberg`.
 - Stretch (відновлення обходу через SQLite, ETag, trio/anyio) не робив.
+
+## Lab 07 — пошук у вебі: FastAPI, Pydantic, Docker
+
+### Запуск
+
+```
+uv run findex index data/gutenberg -o index_pos.bin --positions
+uv run findex serve --index index_pos.bin                # http://127.0.0.1:8000
+uv run findex serve --index index_pos.bin --workers 4 --no-access-log
+docker build -t findex:0.7.0 .
+docker run -p 8000:8000 -e INDEX_PATH=/app/index.bin findex:0.7.0
+```
+
+Конфіг береться тільки з оточення (`pydantic-settings`, а під час розробки ще й з `.env`): `INDEX_PATH`, `LOG_LEVEL`, `HOST`, `PORT` (його задає платформа), `SEARCH_MODE` (лише для бенчмарку). Шляхів і секретів у коді немає. `findex serve` — це той самий CLI з Lab 4. Він запускає uvicorn і одразу перевіряє, що файл індексу існує (`error: index file not found: ...`, код 1).
+
+### Що зроблено (`src/findex/web/`)
+
+| Маршрут | Що повертає |
+|---|---|
+| `GET /search?q=&k=&scorer=&page=` | `SearchResponse{query, scorer, total, page, k, pages, took_ms, results: [{doc_id, title, score, snippet, highlights}]}`. `q` — 1–200 символів, `k` — 1–50, `page` — 1–100, `scorer` — `bm25`/`tfidf`. Інакше 422; поганий синтаксис запиту — 400 |
+| `GET /docs/{doc_id}` | документ повністю; невідомий — 404 `{"detail": "document 999 not found"}` |
+| `GET /stats` | документи, книги, токени, словник, postings, розмір файлу, час завантаження, uptime |
+| `GET /health` | `{"status":"ok","documents":47887}`; поки індекс вантажиться — 503 `{"status":"loading"}`; не вдалося — 503 `{"status":"error","detail":...}` |
+| `GET /docs` | Swagger UI, який FastAPI генерує сам з типів і моделей (`/openapi.json`) |
+| `GET /`, `GET /doc/{id}` | HTML-сторінки (Jinja2) |
+
+- `settings.py` — `Settings(BaseSettings)`; `schemas.py` — Pydantic-моделі **тільки на межі** (вхід/вихід HTTP). Усередині лишились dataclass-и з Lab 2–3 (`Posting`, `DocMeta`, `SearchResult`), а `api.py` перекладає одне в інше.
+- `state.py` — `AppState` / `Engine` і залежності `get_app_state` → `get_engine` (`Depends`). Якщо індексу ще немає, `get_engine` кидає 503.
+- `app.py` — `create_app(settings)` з `lifespan` (async-версія `@contextmanager` з Lab 3). Індекс вантажиться **один раз** у фоні (`asyncio.to_thread(load, ...)`): порт відкривається одразу, а `/health` до кінця завантаження відповідає 503. Платформа бачить, що сервіс живий, але трафік ще не пускає.
+- Middleware з id запиту: береться з `X-Request-ID` або генерується, повертається в заголовку відповіді і потрапляє в кожен рядок логу (`ContextVar` + `logging.Filter`; працює й у потоках пулу). Неочікуваний виняток → стек у лог з id, а клієнту чистий 500 `{"detail": "internal server error", "request_id": "..."}`.
+- `ui.py` + `templates/` + `static/style.css` — сторінка пошуку: поле запиту, вибір BM25/TF-IDF, підсвічені `<mark>` сніпети, бали, сторінки результатів «← 1 2 **3** 4 5 … 60 →», приклади запитів, підказка про синтаксис, перегляд документа з підсвіткою і переходом до сусідніх абзаців. Світла й темна тема (`prefers-color-scheme`), системний шрифт, ширина 760px. Без JavaScript, htmx не додавав.
+
+### Тести (`tests/test_web.py`, 33 тести)
+
+`TestClient` і `app.dependency_overrides[get_app_state]` з маленьким індексом з `conftest.py`, без справжнього файлу індексу. Покрито: успішний пошук і пагінацію (без повторів між сторінками), фразу, `tfidf`, **9 випадків 422** (немає `q`, порожній, задовгий, `k=abc`, `k=0`, `k=51`, `page=0`, `page=101`, `scorer=magic`), 400 на `(python`, документ і 404/422 для `/docs/{id}`, `/stats`, `/openapi.json`, **`/health` 503** і поки «loading», і коли файлу немає (lifespan справді пробує завантажити `no/such/index.bin`). Ще: справжнє завантаження через lifespan, чистий 500 без деталей назовні (але з деталями в лозі), HTML-сторінки (підсвітка, екранування `<script>`, 404, 503), CSS. Усього тестів у проєкті — 202, усі проходять (1 skip).
+
+Starlette 1.10 радить для `TestClient` новий пакет `httpx2`. Ставити його я не став, `TestClient` працює і на звичайному `httpx`. Тому в `pyproject.toml` вимкнене це попередження, а в `test_web.py` — перевірки pyright `reportUnknown*` (типи `TestClient` описані через `httpx2`). Обидва місця прокоментовані.
+
+### `def` чи `async def` для `/search`
+
+Пошук — це робота CPU (BM25 по postings, сніпети, Pydantic), всередині немає жодного `await`. `scripts/bench_web.py` піднімає сервер (1 воркер) у кожному режимі (`SEARCH_MODE=def|async`), шле **20 одночасних** `/search` і паралельно кожні 10 мс питає `/health`. Медіана з 5 серій:
+
+| запит | /search | 20 запитів разом, мс | p50 запиту, мс | /health p50 під час них, мс | /health max, мс |
+|---|---|---:|---:|---:|---:|
+| `q=the` (~38 мс CPU) | `def` | 1070 | 1004 | **124** | 873 |
+| `q=the` | `async def` | 1094 | 1016 | **537** | 951 |
+| `q=the sea` (~3.5 мс) | `def` | 265 | 207 | 112 | 118 |
+| `q=the sea` | `async def` | 253 | 191 | 119 | 125 |
+
+**Рішення: `def`** (так і лишилось у коді, `async def` вмикається лише через `SEARCH_MODE=async` для бенчмарку). Самі запити пошуку однаково швидкі в обох режимах. Під GIL 20 пошуків у будь-якому разі виконуються по черзі на одному ядрі (Lab 5). Різниця в тому, що в `async def` весь пошук виконується в циклі подій і зупиняє його, тож навіть миттєвий `/health` чекає, поки пройде черга пошуків: p50 537 мс. У `def` FastAPI віддає пошук у пул потоків, і цикл подій хоч і бореться з ними за GIL, але отримує його кожні ~5 мс (`switchinterval`): `/health` p50 124 мс, у 4 рази краще. На легкому запиті різниці майже немає. Чесно: `def` не прибрав затримку зовсім, бо GIL лишається, а повністю її прибирають лише кілька процесів (таблиця нижче).
+
+Для порівняння, з `time.sleep(0.5)` замість CPU-роботи (`scripts/experiments_lab7.py`, 4 одночасні запити) різниця величезна: `async def` — **2.01 s** (цикл стоїть, запити по черзі), `def` — **0.53 s** (sleep відпускає GIL, 4 потоки сплять разом). Тобто пул потоків рятує від блокуючого вводу-виводу, але не від CPU-роботи під GIL.
+
+### Навантаження (oha)
+
+`oha -z 30s -c 50 http://127.0.0.1:PORT/search?q=the%20sea` (`scripts/bench_oha.py`). Кожен рядок — окремий сервер з `--no-access-log` і `LOG_LEVEL=WARNING`, перед заміром 5 s розігріву. Машина та сама: i7-11700K (8 ядер / 16 потоків), Windows 10, Python 3.13 (з GIL). Docker Desktop 4.100 (WSL2, ліміт 7.7 GB).
+
+| Target | Route | Concurrency | RPS | p50, ms | p95, ms | p99, ms |
+|---|---|---:|---:|---:|---:|---:|
+| local, 1 worker, `async def` | `/search?q=the sea` | 50 | 171 | 282 | 371 | 464 |
+| local, 1 worker, `def` | `/search?q=the sea` | 50 | 197 | 250 | 291 | 331 |
+| local, 4 workers, `def` | `/search?q=the sea` | 50 | **553** | **93** | **111** | **121** |
+| local Docker (1 worker, access log увімкнений) | `/search?q=the sea` | 20 | 158 | 125 | 144 | 202 |
+| deployed (Render) | `/search?q=the sea` | 20 | — | — | — | — |
+
+Усі відповіді — 200. Рядок для розгорнутого сервісу з'явиться після деплою.
+
+**Як це пов'язано з Lab 5–6.**
+
+- **Один воркер, `async def`.** Найгірший p99 (464 мс). Кожен пошук блокує цикл подій (Lab 6: «один блокуючий виклик зупиняє все»), тож запити стоять у черзі не тільки за CPU, а й за прийомом з'єднань.
+- **Один воркер, `def`.** Пул потоків прибрав блокування циклу, тому RPS трохи вищий, а хвіст коротший (p99 331 мс). Але ядро все одно одне: GIL з Lab 5 пускає лише один потік за раз, а 50 одночасних запитів просто чекають своєї черги (p50 250 мс ≈ 50 × ~5 мс).
+- **4 воркери.** Чотири процеси — чотири GIL, як `ProcessPoolExecutor` у Lab 5: RPS ×2.8, p99 менше в 2.7 рази. Не ×4, бо oha, мережевий стек і JSON теж їдять CPU тієї самої машини, а кожен воркер тримає свою копію індексу (~270 MB × 4).
+- **Docker.** Повільніший за той самий 1 воркер на хості через віртуальну мережу WSL2 і access log (рядок у stdout на кожен запит).
+
+### Docker
+
+`Dockerfile` — два етапи за [гайдом uv](https://docs.astral.sh/uv/guides/integration/docker/):
+
+1. `ghcr.io/astral-sh/uv:python3.13-bookworm-slim`: `uv sync --locked --no-dev` (спочатку тільки залежності, щоб шар кешувався), потім сам findex (`--no-editable`), а потім `scripts/get_corpus.py` і `findex index data/gutenberg --positions` прямо під час збірки.
+2. `python:3.13-slim-bookworm`: тільки `.venv`, `data/` і `index.bin`; користувач `app` (uid 999, не root); `ENV` за замовчуванням; `HEALTHCHECK` на `/health`; `CMD ["findex", "serve"]`.
+
+Образ — 319 MB. `docker run -e INDEX_PATH=/app/index.bin -p 8080:8000 findex:0.7.0` → `/health` 200 через ~3 s, `id` усередині — `uid=999(app)`.
+
+**Знахідка: пам'ять.** У першій версії контейнер після старту займав **546 MB RSS** — більше, ніж 512 MB безкоштовного Render. Причина була в pickle: 1.5 млн об'єктів `Posting` записувались поштучно, і під час `pickle.load` unpickler тримав їх ще й у своїй мемо-таблиці. Пік (`tracemalloc`) — 496 MB проти 248 MB у готовому індексі, і ця пам'ять потім не поверталась ОС. Змінна `MALLOC_ARENA_MAX` нічого не дала (540 MB), тож справа не в glibc. Виправив сам формат: `Index.__getstate__` пише на кожен терм три `array('I')` (doc_ids, tfs, усі позиції підряд), а `__setstate__` збирає `Posting` назад (як `merge` у Lab 5, з вимкненим gc і одним int-об'єктом на документ).
+
+| | до | після |
+|---|---:|---:|
+| файл `index_pos.bin` | 35.5 MB | 28.3 MB |
+| `load()` на Windows | 3.9 s (Lab 4, `-vv`) | 1.9 s |
+| RSS індексу після load (Windows) | 462 MB | 268 MB |
+| RSS контейнера після старту | 546 MB | **376 MB** (398 MB після 30 s oha) |
+
+Тести з Lab 5 на побайтову однаковість індексів після цього проходять як і раніше: той самий індекс дає той самий стан.
+
+### Деплой
+
+`render.yaml` (Render Blueprint): `runtime: docker`, `plan: free`, `healthCheckPath: /health`, env `INDEX_PATH` і `LOG_LEVEL`. Порт Render передає через `PORT`, і `findex serve` його читає. Логи йдуть у stdout (рядок з часом, рівнем, логером і id запиту), Render показує їх у вкладці Logs. Поки що не розгорнуто: для цього потрібен пуш і акаунт на render.com (New → Blueprint → цей репозиторій). Після деплою адреса з'явиться на початку README, а в таблиці — рядок `deployed`.
+
+### Експерименти (`scripts/experiments_lab7.py`)
+
+- `curl "/search?q=whale&k=abc"` → 422 `{"detail":[{"type":"int_parsing","loc":["query","k"],"msg":"Input should be a valid integer, unable to parse string as an integer","input":"abc"}]}`. Цей текст пише FastAPI/Pydantic з анотації `k: int`, а сторінку `/docs` теж генерує FastAPI з тих самих типів.
+- `Hit(doc_id="12", score="0.9")` → `Hit(doc_id=12, score=0.9)`, типи `int` і `float`. `doc_id="twelve"` → `Input should be a valid integer...`
+- `time.sleep(0.5)` у маршруті, 4 одночасні запити: `async def` 2.01 s, `def` 0.53 s.
+- `LOG_LEVEL=LOUD` → помилка вже при створенні `Settings()`: `Input should be 'DEBUG', 'INFO', 'WARNING' or 'ERROR'`. `INDEX_PATH` на неіснуючий файл `Settings` не перевіряє, тому помилка видна в `findex serve` одразу при старті, а без CLI — у `/health` (503 `error`).
+
+### Проблеми
+
+- Git Bash перетворює `-e INDEX_PATH=/app/index.bin` на `C:/Program Files/Git/app/index.bin`, і контейнер падав з «index file not found». Допоміг `MSYS_NO_PATHCONV=1`; з PowerShell такого немає.
+- Docker Desktop спочатку не стартував: у Windows не було ядра WSL 2. Допоміг `wsl --update`.
+- `GET` і `HEAD` для `/health` в одному маршруті давали в OpenAPI два однакові `operationId` (warning). Тепер `HEAD` — окремий маршрут, схований зі схеми.
+- `@app.middleware("http")` ловить виняток з маршруту, тому `TestClient` не перекидає його в тест, а в лог іде стек з id запиту. Це і є потрібна поведінка: тест `test_unexpected_error_is_clean_500` перевіряє, що в лозі є `secret internal detail`, а в тілі відповіді — ні.
+- Stretch (API-ключ і rate limit, ETag, OpenTelemetry) не робив.

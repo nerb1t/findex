@@ -351,3 +351,38 @@ async def _crawl_to_file(
             pages_f.write(json.dumps(asdict(page), ensure_ascii=False) + "\n")
             pages_f.flush()
     return stats
+
+
+@app.command("serve")
+def serve_cmd(
+    index_path: Annotated[
+        Path | None, typer.Option("--index", help="Файл індексу (інакше INDEX_PATH з оточення)")
+    ] = None,
+    host: Annotated[str, typer.Option(envvar="HOST", help="0.0.0.0 - доступ ззовні")] = "127.0.0.1",
+    port: Annotated[int, typer.Option(envvar="PORT", min=1, max=65535)] = 8000,
+    workers: Annotated[int, typer.Option(min=1, help="Процесів uvicorn (як у Lab 5)")] = 1,
+    access_log: Annotated[bool, typer.Option(help="Рядок у лог на кожен запит")] = True,
+) -> None:
+    """Запускає веб-сервіс: API (/search, /docs/{id}, /stats, /health) і сторінку пошуку (/)."""
+    import os
+
+    import uvicorn
+
+    from findex.web.logs import log_config
+    from findex.web.settings import Settings
+
+    if index_path is not None:
+        os.environ["INDEX_PATH"] = str(index_path)  # воркери uvicorn успадкують оточення
+    settings = Settings()
+    if not settings.index_path.exists():
+        fail(f"index file not found: {settings.index_path} (findex index data/ --positions)")
+    uvicorn.run(
+        "findex.web:create_app",
+        factory=True,
+        host=host,
+        port=port,
+        workers=workers,
+        log_config=log_config(settings.log_level, access_log),
+        proxy_headers=True,  # за проксі платформи - справжній IP клієнта в логах
+        forwarded_allow_ips="*",
+    )

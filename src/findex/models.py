@@ -1,8 +1,9 @@
+import gc
 from array import array
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from functools import cached_property
-from typing import Literal
+from typing import Literal, cast
 
 # Класи лежать в окремому модулі, а не в index.py.
 # Причина: якщо запускати модуль як `python -m ...`, він стає `__main__`,
@@ -103,6 +104,51 @@ class Index(Mapping[str, list[AnyPosting]]):
         )
 
     __hash__ = None  # Mapping теж так робить; індекс змінюваний, тому не хешується
+
+    # ---------- pickle (Lab 7) ----------
+    # Якщо pickle пише 1.5 млн об'єктів Posting поштучно, то при завантаженні
+    # unpickler тримає їх усі ще й у своїй мемо-таблиці: пік пам'яті ~2x від
+    # індексу, і ця пам'ять потім не повертається ОС (у Docker RSS був 540 MB,
+    # а безкоштовний Render дає 512 MB). Тому в файл пишемо компактно - по
+    # три array('I') на терм, а Posting збираємо назад уже при завантаженні.
+
+    def __getstate__(self) -> dict[str, object]:
+        state = self.__dict__.copy()
+        state.pop("avg_doc_length", None)  # cached_property порахується заново
+        packed: dict[str, tuple[array[int], array[int], array[int]]] = {}
+        for term, plist in self.postings.items():
+            ids = array("I", [p.doc_id for p in plist])
+            tfs = array("I", [p.tf for p in plist])
+            pos = array("I", [i for p in plist for i in p.positions])  # усі позиції підряд
+            packed[term] = (ids, tfs, pos)
+        state["postings"] = packed
+        return state
+
+    def __setstate__(self, state: dict[str, object]) -> None:
+        packed = cast(dict[str, tuple[array[int], array[int], array[int]]], state["postings"])
+        self.__dict__.update(state)
+        cls = PlainPosting if state["kind"] == "plain" else Posting
+        doc_lengths = cast(dict[DocId, int], state["doc_lengths"])
+        # один об'єкт int на документ (як при побудові), а не новий на кожен posting
+        doc_ints = list(range(max(doc_lengths, default=-1) + 1))
+        postings: dict[str, list[AnyPosting]] = {}
+        was_enabled = gc.isenabled()
+        gc.disable()  # мільйон нових об'єктів без циклів - gc тут лише заважає (Lab 5)
+        try:
+            for term, (ids, tfs, pos) in packed.items():
+                if pos:
+                    plist: list[AnyPosting] = []
+                    o = 0
+                    for d, tf in zip(ids, tfs, strict=True):
+                        plist.append(cls(doc_ints[d], tf, tuple(pos[o : o + tf])))
+                        o += tf
+                else:
+                    plist = [cls(doc_ints[d], tf) for d, tf in zip(ids, tfs, strict=True)]
+                postings[term] = plist
+        finally:
+            if was_enabled:
+                gc.enable()
+        self.postings = postings
 
     def _terms(self) -> dict[str, list[AnyPosting]] | dict[str, ArrayPostings]:
         return self.arrays if self.kind == "array" else self.postings

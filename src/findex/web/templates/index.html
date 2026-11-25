@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% set autofocus = not q %}
+{% block title %}{% if q %}{{ q }} — findex{% else %}findex{% endif %}{% endblock %}
+
+{% macro snippet(parts) -%}
+  {%- for text, hl in parts -%}{% if hl %}<mark>{{ text }}</mark>{% else %}{{ text }}{% endif %}{%- endfor -%}
+{%- endmacro %}
+
+{% block content %}
+  {% if error %}
+    <p class="notice">{{ error }}</p>
+  {% endif %}
+
+  {% if result %}
+    <p class="meta">
+      {% if result.total %}
+        Знайдено <b>{{ "{:,}".format(result.total).replace(",", " ") }}</b> документів
+        {% if result.pages > 1 %}· сторінка {{ result.page }} з {{ result.pages if result.pages < 100 else "100+" }}{% endif %}
+      {% else %}
+        Нічого не знайдено
+      {% endif %}
+      · {{ "%.1f"|format(result.took_ms) }} мс · <code>{{ result.query }}</code>
+    </p>
+
+    <ol class="results" start="{{ (result.page - 1) * result.k + 1 }}">
+      {% for hit in result.hits %}
+        <li>
+          <a class="title" href="/doc/{{ hit.result.doc_id }}?q={{ q|urlencode }}">{{ hit.result.title.split(": ", 1)[1] if ": " in hit.result.title else hit.result.title }}</a>
+          <div class="where">{{ hit.source }} · {{ hit.result.title.split(": ", 1)[0].split(" ")[-1] }} · бал {{ "%.2f"|format(hit.result.score) }}</div>
+          <p class="snippet">{{ snippet(hit.parts) }}</p>
+        </li>
+      {% endfor %}
+    </ol>
+
+    {% if result.pages > 1 %}
+      <nav class="pager" aria-label="Сторінки">
+        {% if result.page > 1 %}
+          <a href="/?q={{ q|urlencode }}&scorer={{ scorer }}&page={{ result.page - 1 }}">← Назад</a>
+        {% endif %}
+        {% for p in window %}
+          {% if p is none %}<span>…</span>
+          {% elif p == result.page %}<b>{{ p }}</b>
+          {% else %}<a href="/?q={{ q|urlencode }}&scorer={{ scorer }}&page={{ p }}">{{ p }}</a>{% endif %}
+        {% endfor %}
+        {% if result.page < result.pages and result.page < 100 %}
+          <a href="/?q={{ q|urlencode }}&scorer={{ scorer }}&page={{ result.page + 1 }}">Далі →</a>
+        {% endif %}
+      </nav>
+    {% endif %}
+  {% elif not error %}
+    <section class="hero">
+      <h1>Пошук по книгах Project Gutenberg</h1>
+      <p>{{ "{:,}".format(documents or 0).replace(",", " ") }} абзаців з 18 класичних книг: Остін, Мелвілл, Шекспір, Керролл, Біблія короля Якова та інші.
+        Результати ранжує BM25, як у Lucene та Elasticsearch.</p>
+      <p class="examples">Спробуйте:
+        {% for ex in examples %}<a href="/?q={{ ex|urlencode }}">{{ ex }}</a>{% endfor %}
+      </p>
+      <details>
+        <summary>Синтаксис запиту</summary>
+        <ul>
+          <li><code>whale ship</code> — обидва слова (AND можна не писати)</li>
+          <li><code>brutus OR cassius</code> — хоча б одне</li>
+          <li><code>emma NOT harriet</code> — без слова</li>
+          <li><code>"white whale"</code> — точна фраза</li>
+          <li><code>(sea OR ocean) storm</code> — дужки</li>
+        </ul>
+      </details>
+    </section>
+  {% endif %}
+{% endblock %}

@@ -1,6 +1,6 @@
 [project]
 name = "findex"
-version = "0.6.0"
+version = "0.7.0"
 description = "findex — a small search engine built step by step (Python course)"
 authors = [{ name = "Ilia Shevel" }]
 keywords = ["search", "inverted-index", "bm25", "cli"]
@@ -11,9 +11,13 @@ classifiers = [
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "fastapi>=0.165.0",
     "httpx>=0.28.1",
+    "jinja2>=3.1.6",
+    "pydantic-settings>=2.16.3",
     "rich>=15.0.0",
     "typer>=0.29.2",
+    "uvicorn[standard]>=0.54.0",
 ]
 
 [project.scripts]
@@ -42,6 +46,10 @@ target-version = "py312"
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP"]
 
+[tool.ruff.lint.flake8-bugbear]
+# Depends(...) у значенні за замовчуванням - це звичайний стиль FastAPI
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Path"]
+
 [tool.ruff.lint.per-file-ignores]
 # у скриптах бенчмарків довгі рядки - це шапки markdown-таблиць
 "scripts/*" = ["E501"]
@@ -49,6 +57,10 @@ select = ["E", "F", "W", "I", "B", "UP"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = ["slow: довгі тести (> 1 s), пропустити: -m \"not slow\""]
+filterwarnings = [
+    # Starlette радить httpx2 для TestClient; поки що лишаємось на httpx
+    "ignore:Using `httpx` with `starlette.testclient` is deprecated",
+]
 
 [tool.pyright]
 include = ["src", "tests"]

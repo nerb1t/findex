@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% set scorer = "bm25" %}
+{% block title %}Не знайдено — findex{% endblock %}
+{% block content %}
+  <section class="hero">
+    <h1>Документа #{{ doc_id }} немає</h1>
+    <p><a href="/{% if q %}?q={{ q|urlencode }}{% endif %}">← на сторінку пошуку</a></p>
+  </section>
+{% endblock %}
