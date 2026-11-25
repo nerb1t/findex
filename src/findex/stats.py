@@ -1,64 +1,55 @@
-import argparse
-import logging
-import time
-import tracemalloc
+"""Статистика: Lab 1 (по корпусу) і Lab 4 (по готовому індексу)."""
+
 from collections import Counter
+from dataclasses import dataclass
 from itertools import islice
 from pathlib import Path
 
 from findex.corpus import iter_documents
+from findex.models import Index
 from findex.tokenize import tokenize
 
 
-def lazy_stats(root, limit=None):
-    docs = islice(iter_documents(root), limit)
+def lazy_stats(root: Path, limit: int | None = None) -> tuple[int, Counter[str]]:
+    """Lab 1: через генератори, в пам'яті тільки один документ."""
     n_docs = 0
-    counts = Counter()
-    for doc in docs:
+    counts: Counter[str] = Counter()
+    for doc in islice(iter_documents(root), limit):
         n_docs += 1
         counts.update(tokenize(doc.text))
     return n_docs, counts
 
 
-def eager_stats(root, limit=None):
-    # спеціально погана версія: все в списки
+def eager_stats(root: Path, limit: int | None = None) -> tuple[int, Counter[str]]:
+    """Lab 1: спеціально погана версія - все в списки."""
     docs = list(islice(iter_documents(root), limit))
     all_tokens = [list(tokenize(doc.text)) for doc in docs]
-    counts = Counter()
+    counts: Counter[str] = Counter()
     for tokens in all_tokens:
         counts.update(tokens)
     return len(docs), counts
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("root", type=Path)
-    parser.add_argument("--limit", type=int, default=None)
-    parser.add_argument("--eager", action="store_true")
-    args = parser.parse_args()
-    logging.basicConfig(level=logging.WARNING)
-
-    tracemalloc.start()
-    start = time.perf_counter()
-    if args.eager:
-        n_docs, counts = eager_stats(args.root, args.limit)
-    else:
-        n_docs, counts = lazy_stats(args.root, args.limit)
-    elapsed = time.perf_counter() - start
-    current, peak = tracemalloc.get_traced_memory()
-    tracemalloc.stop()
-
-    print("version:", "eager" if args.eager else "lazy")
-    print("documents:", n_docs)
-    print("tokens:", counts.total())
-    print("vocabulary:", len(counts))
-    print(f"elapsed: {elapsed:.2f} s")
-    print(f"peak memory: {peak / 1024 / 1024:.1f} MB")
-    print()
-    print("top 50:")
-    for word, count in counts.most_common(50):
-        print(f"  {word:<15} {count}")
+@dataclass(frozen=True)
+class IndexStats:
+    documents: int
+    books: int
+    tokens: int
+    vocabulary: int
+    postings: int
+    avg_doc_length: float
+    top: list[tuple[str, int]]  # найчастіші терми (за сумою tf)
 
 
-if __name__ == "__main__":
-    main()
+def index_stats(index: Index, top: int = 20) -> IndexStats:
+    # частота терма в усьому корпусі = сума tf по всіх його postings
+    freq = Counter({term: sum(p.tf for p in index[term]) for term in index})
+    return IndexStats(
+        documents=index.num_docs,
+        books=len({m.path for m in index.doc_meta.values()}),
+        tokens=sum(index.doc_lengths.values()),
+        vocabulary=len(index),
+        postings=index.num_postings(),
+        avg_doc_length=index.avg_doc_length,
+        top=freq.most_common(top),
+    )

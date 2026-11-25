@@ -1,0 +1,23 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Install dependencies
+        run: uv sync --locked
+      - name: Ruff lint
+        run: uv run ruff check .
+      - name: Ruff format
+        run: uv run ruff format --check .
+      - name: Pyright (strict)
+        run: uv run pyright
+      - name: Tests
+        # корпусу data/ в git немає, тому тести на справжніх книгах будуть skipped
+        run: uv run pytest --cov=findex --cov-report=term-missing

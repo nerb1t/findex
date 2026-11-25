@@ -31,12 +31,12 @@ def main():
 
     index = load(args.index)
     # терми за кількістю документів (df)
-    by_df = sorted(index.postings, key=lambda t: len(index.postings[t]))
+    by_df = sorted(index, key=index.df)
     common = by_df[-2:]
     rare = by_df[:2]
     # рідкий терм з найбільшим doc_id - найгірший випадок для merge,
     # бо щоб до нього дійти, треба пройти майже весь довгий список
-    once = [t for t in by_df if len(index.postings[t]) == 1]
+    once = [t for t in by_df if index.df(t) == 1]
     rare_last = max(once, key=lambda t: index.doc_ids(t)[0])
     cases = [
         ("2 найчастіші", common[1], common[0]),

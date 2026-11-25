@@ -1,5 +1,7 @@
 # findex
 
+[![CI](https://github.com/nerb1t/findex/actions/workflows/ci.yml/badge.svg)](https://github.com/nerb1t/findex/actions/workflows/ci.yml)
+
 Пошукова система, яку робимо протягом курсу Python. Кожна лаба додає щось нове, тег `lab-01`, `lab-02` і т.д.
 
 ## Lab 01 — ітератори, генератори, корпус
@@ -390,3 +392,163 @@ query: (captain AND ahab)   scorer: TfIdf()
 - Логи `@timed` йдуть в stderr, а результати в stdout, тому при перенаправленні у файл вони перемішуються не по порядку. Для прикладу в README запускав з `python -u`.
 - Для сніпетів потрібен текст абзацу, а в індексі його немає. Зберігати тексти — +12 MB, тому зберігаю тільки `start/end` у файлі книги і читаю книгу при показі. Для цього `PARA_RE.split` замінив на `finditer`, щоб знати межі.
 - Stretch (`ResultList` як `Sequence`, `explain` через `singledispatch`) не робив.
+
+## Lab 04 — справжній інструмент: типи, тести, пакування, CLI
+
+### Встановлення
+
+```
+uv tool install .                                   # з папки репозиторію
+uv tool install dist/findex-0.4.0-py3-none-any.whl  # або з wheel (uv build)
+uv tool install https://github.com/nerb1t/findex/releases/download/v0.4.0/findex-0.4.0-py3-none-any.whl
+findex --help
+```
+
+Після цього `findex` є в PATH (`~/.local/bin/findex`), і запускається з будь-якої папки. Без встановлення — `uv run findex ...` або `uv run python -m findex ...` з папки репозиторію.
+
+З Lab 4 старі `python -m findex.index` / `python -m findex.search` / `python -m findex.stats` прибрані: вся логіка лишилась у модулях, а вивід і аргументи тепер тільки в `cli.py`.
+
+### Команди
+
+```
+findex index data/ --out index_pos.bin --positions        # смуга прогресу rich (у stderr)
+findex index data/ --out small.json --limit 3             # тільки перші 3 книги, формат json
+findex search index_pos.bin '(ahab OR starbuck) "white whale" NOT ship' -k 3
+findex search index_pos.bin "captain ahab" --scorer tfidf --engine set
+findex search index_pos.bin "captain ahab" --json -k 5 | jq .title
+findex stats index_pos.bin --top 5
+findex -v search ...      # INFO: що знайдено, cache hit/miss
+findex -vv search ...     # DEBUG: ще й час кожної функції з @timed
+```
+
+Приклад (`COLUMNS=110`, запуск з іншої папки, з установленого wheel):
+
+```
+                        (((ahab OR starbuck) AND "white whale") AND NOT ship)  (bm25)
+┌───┬───────┬──────────────────────────────┬────────────────────────────────────────────────────────────────┐
+│ # │ score │ document                     │ snippet                                                        │
+├───┼───────┼──────────────────────────────┼────────────────────────────────────────────────────────────────┤
+│ 1 │ 21.21 │ melville-moby_dick.txt #2319 │ "Hast seen the White Whale?" gritted Ahab in reply.            │
+├───┼───────┼──────────────────────────────┼────────────────────────────────────────────────────────────────┤
+│ 2 │ 20.27 │ melville-moby_dick.txt #813  │ "Moby Dick?" shouted Ahab. "Do ye know the white whale then,   │
+│   │       │                              │ Tash?"                                                         │
+├───┼───────┼──────────────────────────────┼────────────────────────────────────────────────────────────────┤
+│ 3 │ 19.98 │ melville-moby_dick.txt #1519 │ "Hast thou seen the White Whale?" demanded Ahab, when the boat │
+│   │       │                              │ drifted back.                                                  │
+└───┴───────┴──────────────────────────────┴────────────────────────────────────────────────────────────────┘
+```
+
+(у терміналі слова з запиту підсвічені жовтим). `--json` — один JSON-об'єкт на рядок, тільки в stdout:
+
+```
+{"rank": 1, "score": 15.9694, "doc_id": 40728, "title": "melville-moby_dick.txt #513: \"Captain Ahab.\"", "path": "C:\\...\\melville-moby_dick.txt", "snippet": "\"Captain Ahab.\""}
+```
+
+`findex stats index_pos.bin`: 18 книг, 47 887 документів, 2 173 378 токенів, словник 48 249, 1 552 841 postings, середня довжина 45.4, топ: `the` 133 583, `and` 95 365, `of` 71 229 — ті самі числа, що в Lab 1.
+
+**Помилки.** Очікувані помилки — один рядок у stderr і код 1, без traceback:
+
+```
+> findex search nope.bin x
+error: index file not found: nope.bin            (exit 1)
+> findex search index_pos.bin "(whale"
+error: bad query: missing ')'                    (exit 1)
+> findex search index.bin '"white whale"'        (індекс без --positions)
+error: phrase search needs an index built with --positions
+> findex search bad.bin x                        (не індекс / старий формат)
+error: bad.bin is not a findex index (UnpicklingError: ...)
+```
+
+Неправильні аргументи (`--scorer magic`) ловить сам typer — код 2. Корпус перевіряється (`exists=True, file_okay=False`).
+
+**stdout і stderr.** stdout — тільки дані (таблиця або JSON), stderr — логи, смуга прогресу, помилки. Тому `findex search ... --json | jq` працює навіть з `-vv` (є тест `test_verbose_logs_go_to_stderr`).
+
+### Типи і pyright strict
+
+`[tool.pyright] typeCheckingMode = "strict"` для `src/` і `tests/`: **0 errors, 0 warnings**. Що для цього зроблено:
+
+- всі функції й методи анотовані; `list[str]`, `dict[str, list[Posting]]`, `X | None` замість `Optional`
+- аліаси PEP 695: `type DocId = int`, `type Kind = Literal["plain", "slots", "array"]`, `type Engine = Literal["merge", "set"]`, `type ScorerName = Literal["bm25", "tfidf"]`, `type Unit = Literal["para", "book"]`. typer читає ці `Literal` і сам перевіряє значення опцій
+- генератори: `iter_documents -> Iterator[Document]`, `iter_units(docs: Iterable[Document]) -> Iterator[TextUnit]` — приймаємо `Iterable`, повертаємо `Iterator`
+- `Scorer` — `typing.Protocol` з `__call__(term, posting, index) -> float`. `TfIdf` і `BM25` від нього не наслідуються; pyright перевіряє їх у `make_scorer(name) -> Scorer` і в тестах (`scorers: list[Scorer] = [TfIdf(), BM25(), my_scorer]`)
+- `timed[**P, R](fn: Callable[P, R]) -> Callable[P, R]` — PEP 695 generics з ParamSpec, тому після `@timed` pyright знає справжню сигнатуру функції
+- `Index(Mapping[str, list[AnyPosting]])`; для `kind="array"` дані тепер в окремому полі `arrays: dict[str, tuple[array[int], array[int]]]`, бо один dict з двома різними типами значень pyright не може звузити за `self.kind`
+- JSON-файл описаний `TypedDict` (`IndexJson`); `pickle.load` повертає `Any`, тому перевіряю `isinstance(obj, Index)`
+- merge-функції приймають `Sequence[int]` — підходять і `list`, і `array('I')`
+
+Escape hatches: **один `cast`** (`store.py`: `json.load` повертає `Any`, файл ми писали самі — коментар поруч) і **один `# type: ignore[misc]`** (`tests/test_index.py`: навмисно присвоюю полю frozen dataclass, щоб перевірити `AttributeError`). Більше жодного.
+
+Експеримент: `def count(x: str) -> int: return x` — Python спокійно друкує `hello`, а pyright: `Type "str" is not assignable to return type "int"`. `def up(x: str | None): return x.upper()` → `"upper" is not a known attribute of "None" (reportOptionalMemberAccess)`; після `if x is None: return ""` помилка зникає — це narrowing.
+
+### Тести
+
+**113 тестів** (`uv run python -m pytest`), за 7 s; `-m "not slow"` — 108 тестів за 2.3 s.
+
+| Файл | Що перевіряє |
+|---|---|
+| `conftest.py` | фікстури: маленький корпус (2 книги, 4 абзаци) і індекс з `scope="session"`; `real_index` — 3 справжні книги (skip, якщо немає `data/`) |
+| `test_tokenize.py` | токенізатор, `parametrize` на 15 випадків: кирилиця, грецька (`ΣΊΣΥΦΟΣ` → `σίσυφοσ`), ієрогліфи, `Straße`, комбінований наголос, апострофи, дефіси, цифри; биті utf-8 байти |
+| `test_index.py` | побудова (абзаци/книги, `--limit`, callback прогресу, позиції, array), merge, булеві запити обома engine, save/load у всіх варіантах, биті файли → `StoreError` |
+| `test_lab3.py` | dunder-методи `Index`, `open_index` з винятком, дерева парсера, `&` `|` `~`, три перевірки скорерів, кеш, `@timed` + `wraps`, сніпети |
+| `test_properties.py` | Hypothesis (6 властивостей, нижче) |
+| `test_cli.py` | усі команди через `typer.testing.CliRunner`: таблиця, `--json`, коди виходу, помилки одним рядком, логи тільки в stderr, `-v` / `-vv` |
+| `test_real.py` | `slow`: три перевірки ранжування і фраза на справжньому корпусі |
+
+**Hypothesis** (`tests/test_properties.py`):
+
+1. `load(save(index)) == index` для випадкових корпусів, з позиціями і без, pickle і json (`slow`, ~2–3 s)
+2. postings завжди строго зростають за `doc_id`, `tf == len(positions)`, а сума tf документа = його довжина
+3. оракул: `merge_and/or/not(a, b) == sorted(set(a) & | - set(b))` для будь-яких відсортованих списків
+4. `tokenize` ніколи не дає порожній токен і `tokenize(" ".join(tokens)) == tokens`
+5. будь-яке дерево запиту: `parse(str(tree)) == tree`
+6. `tree.evaluate(index, "merge") == tree.evaluate(index, "set")` для випадкових індексу і дерева
+
+Чесно: Hypothesis нічого не знайшов — усі властивості пройшли з першого разу (в т.ч. на довільному Unicode з `st.text()`). Зате знайшов баг ручний запуск з іншої папки, див. "Проблеми".
+
+**Покриття** (`uv run python -m pytest --cov=findex --cov-report=term-missing`): **98%** (780 рядків, 18 не покрито).
+
+| Модуль | Cover | Що не покрито і чому |
+|---|---:|---|
+| `stats.py` | 64% | `lazy_stats` / `eager_stats` з Lab 1 — їх використовує тільки `scripts/bench.py` |
+| `__main__.py` | 0% | два рядки для `python -m findex`; CLI тестується напряму через `app` |
+| `models.py` | 98% | `avg_doc_length` порожнього індексу, `num_postings` для array (тільки в `memory_study.py`) |
+| `query.py` | 99% | `Node.evaluate` базового класу — там тільки `raise NotImplementedError` |
+| `search.py` | 98% | `Searcher.__repr__` |
+| решта | 100% | |
+
+На CI немає `data/`, тому 4 тести з `test_real.py` там skipped.
+
+### Пакування
+
+- `pyproject.toml` (PEP 621): `version = "0.4.0"`, залежності `typer`, `rich`; група `dev`: `pytest`, `pytest-cov`, `hypothesis`, `pyright`, `ruff`; налаштування `ruff`, `pytest` (маркер `slow`), `pyright`, `coverage`
+- `[project.scripts] findex = "findex.cli:app"` — у wheel це `entry_points.txt` з `[console_scripts]`, а при встановленні uv кладе в `~/.local/bin` маленький `findex.exe`, який імпортує `findex.cli` і викликає `app()`
+- `uv.lock` у git — точні версії для `uv sync --locked` (так робить CI)
+- `src/` layout: тести імпортують встановлений пакет, а не файли з поточної папки
+- `uv build` → `dist/findex-0.4.0-py3-none-any.whl` (в ньому тільки `findex/*.py` і `dist-info`); перевірено `uvx --from dist/findex-0.4.0-py3-none-any.whl findex --version` → `findex 0.4.0` і `uv tool install` з wheel із іншої папки
+
+### Логування
+
+`log = logging.getLogger(__name__)` у кожному модулі, налаштування — один раз у `cli.py` (callback `main`): `RichHandler` у stderr, рівень WARNING / INFO (`-v`) / DEBUG (`-vv`). Діагностичних `print` у `src/` більше немає (`print` лишився тільки для `--json` — це дані). `@timed` пише в DEBUG, cache hit/miss — в INFO, биті utf-8 — WARNING. Форматування лінивим `%`: `log.info("match %s -> %d docs", tree, n)` — рядок збирається, тільки якщо рівень увімкнений.
+
+```
+> findex -vv search index_pos.bin "captain ahab" --json -k 1
+DEBUG    findex.decorators: load took 3929.0 ms
+DEBUG    findex.decorators: Searcher._match took 0.2 ms
+INFO     findex.search: match (captain AND ahab) -> 77 docs (cache miss)
+DEBUG    findex.decorators: Searcher.search took 2.4 ms
+{"rank": 1, "score": 15.9694, ...}
+```
+
+### CI
+
+`.github/workflows/ci.yml` на кожен push і PR: `uv sync --locked` → `ruff check` → `ruff format --check` → `pyright` → `pytest --cov`. Бейдж — на початку README.
+
+### Проблеми
+
+- **Відносні шляхи в індексі.** `findex index data/` записував у `DocMeta.path` шлях `data\gutenberg\...`, і `findex search` з іншої папки падав з `FileNotFoundError` на сніпеті (з traceback!). Знайшов тільки коли запустив встановлений `findex` не з репозиторію. Тепер шлях абсолютний (`resolve()`), а якщо книгу потім видалили — сніпет порожній і warning у лог.
+- **Перевстановлення на Windows.** `uv tool install --force` (і `uv tool uninstall`) поверх уже встановленого findex падали з `failed to remove directory ...\uv\tools\findex\Lib (os error 32)` і лишали зламане оточення: папка `annotated_doc` порожня, `findex` падає з `ImportError`. Перше встановлення "з нуля" працює. Обхід: перейменувати і видалити `%APPDATA%\uv\tools\findex` вручну, потім знову `uv tool install dist/findex-0.4.0-py3-none-any.whl`.
+- Для `kind="array"` раніше `postings` містив то списки `Posting`, то пари `array` — pyright strict такого не пропускає. Розніс у два поля `postings` і `arrays`.
+- `rich` сприймає `[...]` у тексті як розмітку: заголовок `[Emma by Jane Austen 1816]` просто зник би. Тому всі дані в таблиці — `Text(...)`, а не рядки.
+- `rich` переносить довгі рядки по ширині терміналу, і повідомлення про помилку з довгим шляхом ставало двома рядками. Для помилок `soft_wrap=True`.
+- `scripts/bench.py` з Lab 1 імпортував функції, яких не було в `stats.py` — виправив.
+- Stretch (completion, `findex config`, free-threaded CI, TestPyPI) не робив.

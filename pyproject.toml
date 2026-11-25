@@ -1,10 +1,23 @@
 [project]
 name = "findex"
-version = "0.1.0"
+version = "0.4.0"
 description = "findex — a small search engine built step by step (Python course)"
+authors = [{ name = "Ilia Shevel" }]
+keywords = ["search", "inverted-index", "bm25", "cli"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Environment :: Console",
+]
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "rich>=15.0.0",
+    "typer>=0.29.2",
+]
+
+[project.scripts]
+# після `uv tool install .` з'являється команда findex, яка викликає findex.cli:app
+findex = "findex.cli:app"
 
 [build-system]
 requires = ["uv_build>=0.11.32,<0.12.0"]
@@ -12,7 +25,10 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
+    "hypothesis>=6.170.17",
+    "pyright>=1.1.414",
     "pytest>=9.2.0",
+    "pytest-cov>=7.1.0",
     "ruff>=0.17.6",
 ]
 
@@ -25,3 +41,15 @@ select = ["E", "F", "W", "I", "B", "UP"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["slow: довгі тести (> 1 s), пропустити: -m \"not slow\""]
+
+[tool.pyright]
+include = ["src", "tests"]
+typeCheckingMode = "strict"
+pythonVersion = "3.12"
+
+[tool.coverage.run]
+source = ["findex"]
+
+[tool.coverage.report]
+show_missing = true

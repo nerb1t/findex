@@ -1,2 +1,1 @@
-def hello() -> str:
-    return "Hello from findex!"
+"""findex - маленька пошукова система (курс Python)."""

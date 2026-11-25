@@ -13,3 +13,5 @@ dist/
 # індекси (генеруються)
 *.bin
 index*.json
+.coverage
+htmlcov/
