@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/nerb1t/findex/actions/workflows/ci.yml/badge.svg)](https://github.com/nerb1t/findex/actions/workflows/ci.yml)
 
-**Онлайн:** ще не розгорнуто (див. Lab 07 → Деплой). Локально: `uv run findex serve --index index_pos.bin` → http://127.0.0.1:8000
+**Онлайн:** https://findex-0rmn.onrender.com (сторінка пошуку) · [API-документація](https://findex-0rmn.onrender.com/docs) · [/health](https://findex-0rmn.onrender.com/health). Безкоштовний план Render засинає без відвідувачів, тому перший запит після паузи може йти 30–60 s.
 
 Пошукова система, яку робимо протягом курсу Python. Кожна лаба додає щось нове, тег `lab-01`, `lab-02` і т.д.
 
@@ -873,9 +873,9 @@ Starlette 1.10 радить для `TestClient` новий пакет `httpx2`. 
 | local, 1 worker, `def` | `/search?q=the sea` | 50 | 197 | 250 | 291 | 331 |
 | local, 4 workers, `def` | `/search?q=the sea` | 50 | **553** | **93** | **111** | **121** |
 | local Docker (1 worker, access log увімкнений) | `/search?q=the sea` | 20 | 158 | 125 | 144 | 202 |
-| deployed (Render) | `/search?q=the sea` | 20 | — | — | — | — |
+| **deployed** (Render Free, Frankfurt) | `/search?q=the sea` | 20 | 19 | 1096 | 1398 | 1497 |
 
-Усі відповіді — 200. Рядок для розгорнутого сервісу з'явиться після деплою.
+Усі відповіді — 200 (на Render — 544 з 544).
 
 **Як це пов'язано з Lab 5–6.**
 
@@ -883,6 +883,7 @@ Starlette 1.10 радить для `TestClient` новий пакет `httpx2`. 
 - **Один воркер, `def`.** Пул потоків прибрав блокування циклу, тому RPS трохи вищий, а хвіст коротший (p99 331 мс). Але ядро все одно одне: GIL з Lab 5 пускає лише один потік за раз, а 50 одночасних запитів просто чекають своєї черги (p50 250 мс ≈ 50 × ~5 мс).
 - **4 воркери.** Чотири процеси — чотири GIL, як `ProcessPoolExecutor` у Lab 5: RPS ×2.8, p99 менше в 2.7 рази. Не ×4, бо oha, мережевий стек і JSON теж їдять CPU тієї самої машини, а кожен воркер тримає свою копію індексу (~270 MB × 4).
 - **Docker.** Повільніший за той самий 1 воркер на хості через віртуальну мережу WSL2 і access log (рядок у stdout на кожен запит).
+- **Render.** 19 RPS і p50 ~1.1 s — це не мережа: «порожній» `/health` з мого комп'ютера йде ~50 мс (p50 50 мс, Cloudflare → Франкфурт). Безкоштовний план дає лише частку одного ядра, тому один пошук, який локально займає ~5 мс CPU, там коштує ~50 мс. Під GIL (Lab 5) 20 одночасних запитів стоять у черзі за цим одним шматком ядра, тож p50 ≈ 20 × 50 мс ≈ 1 s. Ще воркери тут не допоможуть, бо додаткових ядер немає, а пам'яті (512 MB) вистачає тільки на одну копію індексу. Масштабується це лише платним планом з кількома ядрами (тоді `--workers N`, як рядок «4 workers»). Так само повільно індекс і вантажився: 17.8 s проти 1.9 s локально (`/stats` → `loaded_in_s`).
 
 ### Docker
 
@@ -906,7 +907,9 @@ Starlette 1.10 радить для `TestClient` новий пакет `httpx2`. 
 
 ### Деплой
 
-`render.yaml` (Render Blueprint): `runtime: docker`, `plan: free`, `healthCheckPath: /health`, env `INDEX_PATH` і `LOG_LEVEL`. Порт Render передає через `PORT`, і `findex serve` його читає. Логи йдуть у stdout (рядок з часом, рівнем, логером і id запиту), Render показує їх у вкладці Logs. Поки що не розгорнуто: для цього потрібен пуш і акаунт на render.com (New → Blueprint → цей репозиторій). Після деплою адреса з'явиться на початку README, а в таблиці — рядок `deployed`.
+**https://findex-0rmn.onrender.com** — Render, безкоштовний план, регіон Frankfurt. Розгорнуто через `render.yaml` (Render Blueprint: New → Blueprint → `nerb1t/findex`): `runtime: docker`, `plan: free`, `healthCheckPath: /health`, env `INDEX_PATH` і `LOG_LEVEL`. Render сам збирає `Dockerfile` з гілки `main` при кожному пуші, передає порт через `PORT` (`findex serve` його читає) і пускає трафік на нову версію лише після того, як `/health` відповість 200. Логи йдуть у stdout (час, рівень, логер, id запиту), Render показує їх у вкладці Logs. Відповіді йдуть через Cloudflare (`server: cloudflare`, `x-render-origin-server: uvicorn`), а заголовок `x-request-id` доходить до клієнта.
+
+Перевірка після деплою: `/health` → `{"status":"ok","documents":47887}`; `/search?q=white whale&k=1` → 110 документів; `/docs/999999` → 404; `/stats` → `loaded_in_s: 17.8`.
 
 ### Експерименти (`scripts/experiments_lab7.py`)
 
