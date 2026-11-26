@@ -126,11 +126,17 @@ class SemanticIndex:
     @classmethod
     def load(cls, path: Path, embedder: Embedder | None = None) -> "SemanticIndex":
         with np.load(path) as data:
-            q = data["q"].astype(np.float32)
+            e = data["q"].astype(np.float32)  # одна копія float32 (73 MB), далі все на місці
             scale = data["scale"].astype(np.float32)
             owner = data["owner"].astype(np.int32)
             model = str(data["model"])
-        return cls(normalize(q * scale[:, None] / 127), owner, model, embedder)
+        # "e = normalize(q * scale / 127)" створювало б ще 3 тимчасові матриці по 73 MB,
+        # і пік пам'яті в контейнері був 529 MB при ліміті Render 512 MB. Тому in-place:
+        e *= (scale / 127)[:, None]
+        # einsum: суми квадратів рядків без тимчасової матриці e * e
+        norms = np.sqrt(np.einsum("ij,ij->i", e, e))
+        e /= np.maximum(norms, 1e-12)[:, None]
+        return cls(e, owner, model, embedder)
 
     def __post_init__(self) -> None:
         # фрагменти одного документа йдуть підряд: межі груп для reduceat

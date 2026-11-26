@@ -18,7 +18,7 @@ from dataclasses import dataclass
 import numpy as np
 from numpy.typing import NDArray
 
-from findex.models import DocId, Index
+from findex.models import ArrayPostings, DocId, Index
 from findex.scoring import BM25, TfIdf
 
 type IntArray = NDArray[np.int32]
@@ -34,35 +34,34 @@ class VectorPostings:
     num_docs: int
     avg_doc_length: float
 
+    # Lab 8, M3: для компактного індексу (kind="array") масиви вже є в пам'яті -
+    # беремо np.frombuffer прямо з них при кожному запиті, без жодної копії (~1 мкс).
+    # Без цього копія всіх постингів займала +54 MB, а на Render ліміт 512 MB.
+    arrays: dict[str, ArrayPostings] | None = None
+
     @classmethod
     def from_index(cls, index: Index) -> "VectorPostings":
-        """Один раз перекладаємо постинги з об'єктів у масиви (~0.3 s на корпусі)."""
+        """Один раз перекладаємо постинги в масиви (~0.3 s для slots, ~0 для array)."""
+        n = index.num_docs
+        doc_len = np.zeros(n, np.int32)
+        for d, length in index.doc_lengths.items():
+            doc_len[d] = length
+        empty = np.zeros(0, np.int32)
+        if index.kind == "array":
+            return cls(empty, empty, {}, doc_len, n, index.avg_doc_length, index.arrays)
         span: dict[str, tuple[int, int]] = {}
         id_parts: list[IntArray] = []
         tf_parts: list[IntArray] = []
         start = 0
         for term in index:
-            if index.kind == "array":
-                # array('I') -> NumPy без копії і без жодного Posting (np.frombuffer).
-                # 'I' - uint32; doc_id < 2^31, тож ті самі байти як int32 - те саме число
-                a_ids, a_tfs = index.arrays[term]
-                ids = np.frombuffer(a_ids, np.int32) if len(a_ids) else np.zeros(0, np.int32)
-                tfs = np.frombuffer(a_tfs, np.int32) if len(a_tfs) else np.zeros(0, np.int32)
-            else:
-                plist = index[term]
-                ids = np.fromiter((p.doc_id for p in plist), np.int32, len(plist))
-                tfs = np.fromiter((p.tf for p in plist), np.int32, len(plist))
-            id_parts.append(ids)
-            tf_parts.append(tfs)
-            span[term] = (start, start + len(ids))
-            start += len(ids)
-        n = index.num_docs
-        doc_len = np.zeros(n, np.int32)
-        for d, length in index.doc_lengths.items():
-            doc_len[d] = length
+            plist = index[term]
+            id_parts.append(np.fromiter((p.doc_id for p in plist), np.int32, len(plist)))
+            tf_parts.append(np.fromiter((p.tf for p in plist), np.int32, len(plist)))
+            span[term] = (start, start + len(plist))
+            start += len(plist)
         return cls(
-            ids=np.concatenate(id_parts) if id_parts else np.zeros(0, np.int32),
-            tfs=np.concatenate(tf_parts) if tf_parts else np.zeros(0, np.int32),
+            ids=np.concatenate(id_parts) if id_parts else empty,
+            tfs=np.concatenate(tf_parts) if tf_parts else empty,
             span=span,
             doc_len=doc_len,
             num_docs=n,
@@ -70,6 +69,12 @@ class VectorPostings:
         )
 
     def postings(self, term: str) -> tuple[IntArray, IntArray]:
+        if self.arrays is not None:
+            pair = self.arrays.get(term)
+            if pair is None or len(pair[0]) == 0:
+                return self.ids, self.tfs  # порожні
+            # array('I') - uint32; doc_id < 2^31, тож ті самі байти як int32 - те саме число
+            return np.frombuffer(pair[0], np.int32), np.frombuffer(pair[1], np.int32)
         start, end = self.span.get(term, (0, 0))
         return self.ids[start:end], self.tfs[start:end]  # зрізи - це view, без копії
 

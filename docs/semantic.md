@@ -26,7 +26,18 @@ GET /search?q=...&mode=keyword|semantic|hybrid        (і перемикач "С
 | файл | 28.3 MB | 28.6 MB |
 | `load()` | 1.9 s | **0.20 s** |
 | RSS індексу | 268 MB | **97 MB** |
-| + масиви NumPy для скорера | — | +54 MB (0.10 s) |
+| + масиви NumPy для скорера | +13 MB | 0 (`np.frombuffer` прямо з `array('I')` на кожен запит) |
+
+**Docker-контейнер з `-m 512m`** (ліміт як на Render Free; індекс `array` з позиціями + ембединги + модель):
+
+| | RSS | пік (VmHWM) |
+|---|---:|---:|
+| перша версія (копії при завантаженні ембедингів, копія постингів) | 465 MB | **529 MB** — більше за ліміт |
+| `e *= scale` / `e /= norms` на місці замість `normalize(q * scale / 127)` | 457 MB | 484 MB |
+| + постинги через `np.frombuffer` без копії | 414 MB | **431 MB** |
+| після 30 s oha (20 клієнтів: semantic, hybrid, keyword) | 474 MB | 474 MB, без OOM |
+
+oha в тому самому контейнері (`/search?q=the sea`, 20 клієнтів, 10 s): keyword **274 RPS** (p99 96 мс; у Lab 7 було 158 RPS — це NumPy-скорер), semantic 113 RPS (p99 268 мс; ембединг запиту — це прохід через нейромережу), hybrid 79 RPS (обидва рейтинги + злиття).
 
 ## precision@5: keyword / semantic / hybrid
 

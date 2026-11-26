@@ -55,7 +55,9 @@ class AppState:
             await asyncio.to_thread(lambda: engine.searcher.vectors)
             emb = embeddings or default_embeddings_path(path)
             if emb.exists():
-                engine.semantic = await asyncio.to_thread(load_semantic, emb, model_dir)
+                engine.semantic = await asyncio.to_thread(
+                    load_semantic, emb, model_dir, index.num_docs
+                )
         except Exception as e:  # noqa: BLE001  # немає файлу / не індекс - сервіс живий, але 503
             self.error = f"{type(e).__name__}: {e}"
             log.error("cannot load index %s: %s", path, self.error)
@@ -67,10 +69,13 @@ class AppState:
         log.info("loaded %r from %s in %.1f s", index, path, took)
 
 
-def load_semantic(path: Path, model_dir: Path | None) -> SemanticIndex | None:
+def load_semantic(path: Path, model_dir: Path | None, num_docs: int) -> SemanticIndex | None:
     """Ембединги + модель. Якщо щось не так - сервіс працює далі, але лише keyword."""
     try:
         sem = SemanticIndex.load(path)
+        if len(sem.owner) and int(sem.owner.max()) >= num_docs:
+            # ембединги від іншого індексу: doc_id не збігаються - краще без семантики
+            raise ValueError(f"embeddings are for a different index ({path})")
         sem.embedder = FastEmbedder(sem.model, str(model_dir) if model_dir else None)
     except Exception as e:  # noqa: BLE001
         log.warning("semantic search disabled: %s: %s", type(e).__name__, e)

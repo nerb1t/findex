@@ -21,7 +21,13 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # Для демо так найпростіше: контейнер нічого не качає при старті
 COPY scripts/get_corpus.py ./scripts/
 RUN .venv/bin/python scripts/get_corpus.py \
-    && .venv/bin/findex index data/gutenberg --out index.bin --positions
+    && .venv/bin/findex index data/gutenberg --out index.bin --kind array --positions
+
+# Lab 8: ембединги рахуються ~6 хв на 8 ядрах - на сервері збірки це надто довго,
+# тому файл (int8, 19 MB) лежить у репозиторії. Модель качаємо в образ один раз,
+# щоб контейнер не ходив за нею в мережу при кожному старті
+COPY embeddings/gutenberg.emb.npz ./index.emb.npz
+RUN .venv/bin/python -c "from fastembed import TextEmbedding; TextEmbedding('sentence-transformers/all-MiniLM-L6-v2', cache_dir='/app/models')"
 
 # ---------- етап 2: запуск ----------
 FROM python:3.13-slim-bookworm
@@ -31,11 +37,14 @@ COPY --from=builder --chown=app:app /app/.venv /app/.venv
 # шлях до книг записаний в індексі (/app/data/...) - сніпети читають їх звідти
 COPY --from=builder --chown=app:app /app/data /app/data
 COPY --from=builder --chown=app:app /app/index.bin /app/index.bin
+COPY --from=builder --chown=app:app /app/index.emb.npz /app/index.emb.npz
+COPY --from=builder --chown=app:app /app/models /app/models
 
 # конфіг - тільки змінні оточення; будь-яку можна перебити: docker run -e LOG_LEVEL=DEBUG
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     INDEX_PATH=/app/index.bin \
+    MODEL_DIR=/app/models \
     HOST=0.0.0.0 \
     PORT=8000 \
     LOG_LEVEL=INFO
