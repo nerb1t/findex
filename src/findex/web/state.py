@@ -46,12 +46,17 @@ class AppState:
         start = time.perf_counter()
         try:
             index = await asyncio.to_thread(load, path)
+            engine = Engine(index)
+            # масиви NumPy для скорера (Lab 8) будуємо теж у потоці, а не в циклі подій
+            await asyncio.to_thread(lambda: engine.searcher.vectors)
         except Exception as e:  # noqa: BLE001  # немає файлу / не індекс - сервіс живий, але 503
             self.error = f"{type(e).__name__}: {e}"
             log.error("cannot load index %s: %s", path, self.error)
             return
         took = time.perf_counter() - start
-        self.engine = Engine(index, took, path.stat().st_size / 2**20)
+        engine.loaded_in = took
+        engine.index_file_mb = path.stat().st_size / 2**20
+        self.engine = engine
         log.info("loaded %r from %s in %.1f s", index, path, took)
 
 

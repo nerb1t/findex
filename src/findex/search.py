@@ -4,12 +4,16 @@ import functools
 import heapq
 import logging
 from dataclasses import dataclass
+from functools import cached_property
+
+import numpy as np
 
 from findex.decorators import timed
 from findex.merge import Engine
 from findex.models import DocId, Index
 from findex.query import Node, parse
-from findex.scoring import BM25, Scorer
+from findex.scoring import BM25, Scorer, TfIdf
+from findex.vector import VectorPostings, score_terms, top_k
 
 log = logging.getLogger(__name__)
 
@@ -24,12 +28,19 @@ class SearchResult:
 
 
 class Searcher:
-    def __init__(self, index: Index, engine: Engine = "merge") -> None:
+    def __init__(self, index: Index, engine: Engine = "merge", vectorized: bool = True) -> None:
         self.index = index
         self.engine: Engine = engine
+        # Lab 8: BM25/TF-IDF виразами NumPy. False - старий цикл з Lab 3 (для порівняння)
+        self.vectorized = vectorized
         # lru_cache на дерево запиту -> doc_ids. Дерево - frozen dataclass,
         # тому хешується. Кеш свій для кожного Searcher (бо в кожного свій індекс).
         self.match = functools.lru_cache(maxsize=256)(self._match)
+
+    @cached_property
+    def vectors(self) -> VectorPostings:
+        # будується один раз, при першому пошуку (або заздалегідь у веб-сервісі)
+        return VectorPostings.from_index(self.index)
 
     def __repr__(self) -> str:
         return f"Searcher({self.index!r}, engine={self.engine!r})"
@@ -53,9 +64,21 @@ class Searcher:
         hit = self.match.cache_info().hits > hits
         log.info("match %s -> %d docs (%s)", tree, len(ids), "cache hit" if hit else "cache miss")
 
+        terms = list(set(tree.terms()))
+        if self.vectorized and isinstance(scorer, BM25 | TfIdf):
+            cands = np.asarray(ids, dtype=np.int32)  # match повертає відсортовані doc_id
+            top_pairs = top_k(cands, score_terms(self.vectors, terms, scorer, cands), k)
+            return [SearchResult(sc, d, self.index.doc_meta[d].title) for d, sc in top_pairs]
+        return self._search_python(ids, terms, scorer, k)
+
+    def _search_python(
+        self, ids: tuple[DocId, ...], terms: list[str], scorer: Scorer, k: int
+    ) -> list[SearchResult]:
+        """Lab 3: цикл по об'єктах Posting. Лишився для будь-якого іншого Scorer
+        і як еталон для тесту "той самий порядок"."""
         # бали рахуємо тільки для документів, які пройшли булевий фільтр
         scores = dict.fromkeys(ids, 0.0)
-        for term in set(tree.terms()):
+        for term in terms:
             if term not in self.index:
                 continue
             for p in self.index[term]:
