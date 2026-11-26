@@ -16,3 +16,7 @@ index*.json
 .coverage
 htmlcov/
 .venv-*/
+
+# ембединги з findex embed (у git лише embeddings/gutenberg.emb.npz - для Docker)
+*.emb.npz
+!embeddings/*.emb.npz

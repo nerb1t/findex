@@ -21,6 +21,7 @@ class SearchHit(BaseModel):
 
 class SearchResponse(BaseModel):
     query: str = Field(description="Як запит зрозумів парсер")
+    mode: Literal["keyword", "semantic", "hybrid"]
     scorer: Literal["bm25", "tfidf"]
     total: int = Field(description="Скільки документів підходить під запит")
     page: int

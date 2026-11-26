@@ -20,7 +20,14 @@ import typer
 from rich.console import Console
 from rich.live import Live
 from rich.logging import RichHandler
-from rich.progress import BarColumn, DownloadColumn, Progress, TextColumn, TimeElapsedColumn
+from rich.progress import (
+    BarColumn,
+    DownloadColumn,
+    MofNCompleteColumn,
+    Progress,
+    TextColumn,
+    TimeElapsedColumn,
+)
 from rich.table import Table
 from rich.text import Text
 
@@ -34,9 +41,22 @@ from findex.parallel import DEFAULT_CHUNK_KB, ExecutorName, Task, build_index_pa
 from findex.query import QueryError, parse
 from findex.scoring import ScorerName, make_scorer
 from findex.search import Searcher
+from findex.semantic import (
+    DEFAULT_MODEL,
+    FastEmbedder,
+    SearchMode,
+    SemanticIndex,
+    build_chunks,
+    default_embeddings_path,
+    embed_index,
+    save_embeddings,
+    search_any,
+    semantic_text,
+)
 from findex.snippet import doc_text, snippet_parts
 from findex.stats import index_stats
 from findex.store import StoreError, load, save
+from findex.tokenize import tokenize
 
 log = logging.getLogger(__name__)
 
@@ -122,8 +142,6 @@ def index_cmd(
     ] = DEFAULT_CHUNK_KB,
 ) -> None:
     """Будує індекс з корпусу і зберігає у файл."""
-    if kind == "array" and positions:
-        fail("--positions does not work with --kind array")
     files = corpus_files(corpus)[:limit]
     if not files:
         fail(f"no .txt/.jsonl files in {corpus}")
@@ -163,20 +181,36 @@ def search_cmd(
     scorer: Annotated[ScorerName, typer.Option(help="Формула балів")] = "bm25",
     engine: Annotated[Engine, typer.Option(help="merge або set (Lab 2)")] = "merge",
     json_out: Annotated[bool, typer.Option("--json", help="JSON lines у stdout")] = False,
+    mode: Annotated[
+        SearchMode, typer.Option(help="keyword (BM25), semantic (ембединги) або hybrid (RRF)")
+    ] = "keyword",
+    embeddings: Annotated[
+        Path | None, typer.Option(help="Файл findex embed (типово <індекс>.emb.npz)")
+    ] = None,
 ) -> None:
     """Шукає в індексі і показує ранжовані результати зі сніпетами."""
-    try:
-        tree = parse(query)
-    except QueryError as e:
-        fail(f"bad query: {e}")
+    title = query
+    terms: set[str] = set(tokenize(semantic_text(query)))  # для підсвітки в сніпетах
+    if mode == "keyword":
+        try:
+            tree = parse(query)
+        except QueryError as e:
+            fail(f"bad query: {e}")
+        title, terms = str(tree), set(tree.terms())
 
     index = open_or_fail(index_path)
+    semantic: SemanticIndex | None = None
+    if mode != "keyword":
+        emb_path = embeddings or default_embeddings_path(index_path)
+        if not emb_path.exists():
+            fail(f"embeddings not found: {emb_path} (run: findex embed {index_path})")
+        semantic = SemanticIndex.load(emb_path)
+        semantic.embedder = FastEmbedder(semantic.model)
     try:
-        results = Searcher(index, engine).search(tree, make_scorer(scorer), k)
+        results = search_any(Searcher(index, engine), semantic, query, mode, make_scorer(scorer), k)
     except QueryError as e:  # напр. фраза без --positions
         fail(str(e))
 
-    terms = set(tree.terms())
     if json_out:
         for rank, r in enumerate(results, 1):
             meta = index.doc_meta[r.doc_id]
@@ -194,9 +228,10 @@ def search_cmd(
         return
 
     if not results:
-        err.print(f"nothing found for {tree}")
+        err.print(f"nothing found for {title}")
         return
-    table = Table(title=f"{tree}  ({scorer})", show_lines=True)
+    label = scorer if mode == "keyword" else mode
+    table = Table(title=f"{title}  ({label})", show_lines=True)
     table.add_column("#", justify="right")
     table.add_column("score", justify="right")
     table.add_column("document", max_width=30)
@@ -209,6 +244,40 @@ def search_cmd(
         # Text(...), а не рядок: інакше rich сприйме [дужки] в тексті як розмітку
         table.add_row(str(rank), f"{r.score:.2f}", Text(r.title.split(":")[0]), snippet)
     out.print(table)
+
+
+@app.command("embed")
+def embed_cmd(
+    index_path: Annotated[Path, typer.Argument(help="Файл індексу")],
+    out_path: Annotated[
+        Path | None, typer.Option("--out", "-o", help="Типово <індекс>.emb.npz")
+    ] = None,
+    model: Annotated[str, typer.Option(help="Модель fastembed")] = DEFAULT_MODEL,
+) -> None:
+    """Ембединги всіх документів (фрагменти до 200 слів) для semantic/hybrid пошуку."""
+    index = open_or_fail(index_path)
+    out_path = out_path or default_embeddings_path(index_path)
+    texts, _ = build_chunks(index)
+    embedder = FastEmbedder(model)
+    start = time.perf_counter()
+    progress = Progress(
+        TextColumn("[bold]embedding"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        TimeElapsedColumn(),
+        console=err,
+    )
+    with progress:
+        task = progress.add_task("embedding", total=len(texts))
+        vectors, owner = embed_index(
+            index, embedder, on_progress=lambda n: progress.advance(task, n)
+        )
+    save_embeddings(out_path, vectors, owner, model)
+    size = out_path.stat().st_size / 2**20
+    out.print(
+        f"{len(texts):,} chunks x {vectors.shape[1]} -> {out_path} ({size:.1f} MB), "
+        f"{time.perf_counter() - start:.0f} s"
+    )
 
 
 @app.command("stats")

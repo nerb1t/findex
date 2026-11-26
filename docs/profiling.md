@@ -52,9 +52,9 @@ uv run python -m pytest tests/test_bench.py --benchmark-enable --benchmark-only
 `src/findex/vector.py`. Постинги всього індексу лежать трьома суцільними масивами: `ids: int32[P]`, `tfs: int32[P]` (терм за термом) і `span: term -> (start, end)`. Довжини документів — один `int32[N]`. Будуються один раз з `Index` (304 мс на повному корпусі, у веб-сервісі — у потоці під час старту). Для кожного терма запиту бал **усіх** його документів рахується одним виразом:
 
 ```python
-norm = 1 - b + b * doc_len[ids] / avg_len                   # fancy indexing
-part = idf * tf * (k1 + 1) / (tf + k1 * norm)               # ufunc-и над масивом
-scores[pos] += part                                          # scatter-add
+norm = 1 - b + b * doc_len[ids] / avg_len  # fancy indexing
+part = idf * tf * (k1 + 1) / (tf + k1 * norm)  # ufunc-и над масивом
+scores[pos] += part  # scatter-add
 ```
 
 Топ-k — `np.argpartition` (O(n)), а сортуємо лише k переможців (`np.lexsort`: бал за спаданням, при рівних — менший doc_id, як `heapq.nlargest` у Lab 3).

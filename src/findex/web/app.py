@@ -31,7 +31,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # "loading", поки pickle читається (платформа бачить, що сервіс живий)
         state = AppState()
         app.state.findex = state
-        task = asyncio.create_task(state.load(settings.index_path))
+        task = asyncio.create_task(
+            state.load(settings.index_path, settings.embeddings_path, settings.model_dir)
+        )
         log.info("starting, index=%s, search_mode=%s", settings.index_path, settings.search_mode)
         yield
         task.cancel()

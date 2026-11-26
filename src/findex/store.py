@@ -11,7 +11,7 @@ from array import array
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import TypedDict, cast
+from typing import NotRequired, TypedDict, cast
 
 from findex.decorators import timed
 from findex.models import AnyPosting, ArrayPostings, DocMeta, Index, Kind, PlainPosting, Posting
@@ -33,6 +33,7 @@ class IndexJson(TypedDict):
     positions: bool
     postings: dict[str, list[list[int]]]  # term -> [[doc_id, tf, pos1, pos2, ...], ...]
     arrays: dict[str, list[list[int]]]  # term -> [[doc_ids...], [tfs...]]
+    array_positions: NotRequired[dict[str, list[int]]]  # term -> усі позиції підряд (Lab 8)
     doc_lengths: dict[str, int]  # ключі в json завжди рядки
     doc_meta: dict[str, tuple[str, str, int, int]]
 
@@ -112,6 +113,7 @@ def save_json(index: Index, path: Path) -> None:
         "positions": index.positions,
         "postings": postings,
         "arrays": {t: [list(ids), list(tfs)] for t, (ids, tfs) in index.arrays.items()},
+        "array_positions": {t: list(p) for t, p in index.array_positions.items()},
         "doc_lengths": {str(d): n for d, n in index.doc_lengths.items()},
         "doc_meta": {str(d): (m.path, m.title, m.start, m.end) for d, m in index.doc_meta.items()},
     }
@@ -135,4 +137,5 @@ def load_json(path: Path) -> Index:
     }
     doc_lengths = {int(d): n for d, n in data["doc_lengths"].items()}
     doc_meta = {int(d): DocMeta(*m) for d, m in data["doc_meta"].items()}
-    return Index(postings, doc_lengths, doc_meta, kind, data["positions"], arrays)
+    array_pos = {t: array("I", p) for t, p in data.get("array_positions", {}).items()}
+    return Index(postings, doc_lengths, doc_meta, kind, data["positions"], arrays, array_pos)

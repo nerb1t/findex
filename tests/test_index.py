@@ -77,9 +77,16 @@ def test_array_same_as_slots(cats: Path) -> None:
         assert a[term] == b[term]
 
 
-def test_array_no_positions() -> None:
-    with pytest.raises(ValueError):
-        build_index_from_units([], kind="array", positions=True)
+def test_array_with_positions(cats: Path) -> None:
+    """Lab 8: компактний індекс з позиціями - ті самі postings, що й slots."""
+    a = build_index(cats, kind="array", positions=True)
+    b = build_index(cats, kind="slots", positions=True)
+    assert a.positions and not a.postings and a.array_positions
+    for term in b:
+        assert a[term] == b[term]  # Posting(doc_id, tf, positions) збираються на льоту
+    assert parse('"the cat"').evaluate(a) == parse('"the cat"').evaluate(b) == [0, 1]
+    assert a.term_frequency("the") == b.term_frequency("the") == 3
+    assert build_index_from_units([], kind="array", positions=True).num_docs == 0
 
 
 def test_paragraph_offsets() -> None:

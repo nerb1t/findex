@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 
 from findex.query import QueryError
 from findex.scoring import ScorerName
+from findex.semantic import SearchMode
 from findex.snippet import doc_text
 from findex.web.schemas import (
     DocumentResponse,
@@ -28,6 +29,10 @@ Q = Annotated[
 K = Annotated[int, Query(ge=1, le=50, description="Результатів на сторінку")]
 PageNo = Annotated[int, Query(ge=1, le=100, description="Номер сторінки результатів")]
 Scorer = Annotated[ScorerName, Query(description="Формула балів")]
+Mode = Annotated[
+    SearchMode,
+    Query(description="keyword - BM25/TF-IDF, semantic - ембединги, hybrid - обидва через RRF"),
+]
 
 ERRORS: dict[int | str, dict[str, object]] = {
     400: {"model": ErrorResponse, "description": "Поганий запит (дужки, фраза без позицій)"},
@@ -38,6 +43,7 @@ ERRORS: dict[int | str, dict[str, object]] = {
 def to_response(p: SearchPage) -> SearchResponse:
     return SearchResponse(
         query=p.query,
+        mode=p.mode,
         scorer=p.scorer,
         total=p.total,
         page=p.page,
@@ -57,9 +63,11 @@ def to_response(p: SearchPage) -> SearchResponse:
     )
 
 
-def do_search(engine: Engine, q: str, k: int, scorer: ScorerName, page: int) -> SearchResponse:
+def do_search(
+    engine: Engine, q: str, k: int, scorer: ScorerName, page: int, mode: SearchMode
+) -> SearchResponse:
     try:
-        return to_response(run_search(engine, q, k, scorer, page))
+        return to_response(run_search(engine, q, k, scorer, page, mode))
     except QueryError as e:
         raise HTTPException(400, detail=f"bad query: {e}") from e
 
@@ -75,9 +83,10 @@ def search_def(
     k: K = 10,
     scorer: Scorer = "bm25",
     page: PageNo = 1,
+    mode: Mode = "keyword",
     engine: Engine = Depends(get_engine),
 ) -> SearchResponse:
-    return do_search(engine, q, k, scorer, page)
+    return do_search(engine, q, k, scorer, page, mode)
 
 
 async def search_async(
@@ -85,9 +94,10 @@ async def search_async(
     k: K = 10,
     scorer: Scorer = "bm25",
     page: PageNo = 1,
+    mode: Mode = "keyword",
     engine: Engine = Depends(get_engine),
 ) -> SearchResponse:
-    return do_search(engine, q, k, scorer, page)
+    return do_search(engine, q, k, scorer, page, mode)
 
 
 def make_router(search_mode: Literal["def", "async"] = "def") -> APIRouter:

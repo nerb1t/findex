@@ -43,7 +43,7 @@ class IndexStats:
 
 def index_stats(index: Index, top: int = 20) -> IndexStats:
     # частота терма в усьому корпусі = сума tf по всіх його postings
-    freq = Counter({term: sum(p.tf for p in index[term]) for term in index})
+    freq = Counter({term: index.term_frequency(term) for term in index})
     return IndexStats(
         documents=index.num_docs,
         books=len({m.path for m in index.doc_meta.values()}),

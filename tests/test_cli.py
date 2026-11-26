@@ -43,11 +43,14 @@ def test_index_json_and_limit(corpus: Path, tmp_path: Path) -> None:
     assert "docs=2" in result.stdout  # тільки a.txt (2 абзаци)
 
 
-def test_index_bad_options(corpus: Path, tmp_path: Path) -> None:
-    out = str(tmp_path / "x.bin")
-    result = runner.invoke(app, ["index", str(corpus), "-o", out, "--kind", "array", "--positions"])
-    assert result.exit_code == 1
-    assert "error:" in result.stderr
+def test_index_array_with_positions(corpus: Path, tmp_path: Path) -> None:
+    out = tmp_path / "x.bin"
+    result = runner.invoke(
+        app, ["index", str(corpus), "-o", str(out), "--kind", "array", "--positions"]
+    )
+    assert result.exit_code == 0, result.output
+    result = runner.invoke(app, ["search", str(out), '"event loop"', "--json"])
+    assert result.exit_code == 0 and len(result.stdout.splitlines()) == 2
 
 
 def test_index_empty_dir(tmp_path: Path) -> None:

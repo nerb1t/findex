@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     # Тільки для бенчмарку (Lab 7, M2/M4): "async" реєструє /search як async def,
     # щоб поміряти, як це блокує цикл подій. Типово - звичайний def.
     search_mode: Literal["def", "async"] = "def"
+    # Lab 8: ембединги для semantic/hybrid (типово <index>.emb.npz, якщо файл є)
+    embeddings_path: Path | None = None
+    # куди fastembed кладе модель (у Docker - всередині образу, щоб не качати при старті)
+    model_dir: Path | None = None
 
 
 @lru_cache

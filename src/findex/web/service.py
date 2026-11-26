@@ -8,7 +8,9 @@ from dataclasses import dataclass
 from findex.query import parse
 from findex.scoring import ScorerName, make_scorer
 from findex.search import SearchResult
+from findex.semantic import SearchMode, search_any, semantic_text
 from findex.snippet import Parts, doc_text, snippet_parts
+from findex.tokenize import tokenize
 from findex.web.state import Engine
 
 
@@ -26,6 +28,7 @@ class Hit:
 @dataclass(frozen=True)
 class SearchPage:
     query: str
+    mode: SearchMode
     scorer: ScorerName
     total: int
     page: int
@@ -44,19 +47,37 @@ def source_name(path: str) -> str:
     return re.split(r"[\\/]", path.split("#")[0])[-1]
 
 
-def run_search(engine: Engine, q: str, k: int, scorer: ScorerName, page: int) -> SearchPage:
+SEMANTIC_DEPTH = 100  # semantic/hybrid: показуємо не більше 100 найближчих
+
+
+def run_search(
+    engine: Engine,
+    q: str,
+    k: int,
+    scorer: ScorerName,
+    page: int,
+    mode: SearchMode = "keyword",
+) -> SearchPage:
     """Робота CPU (парсер, BM25, сніпети). Кидає QueryError на поганий запит.
 
     Сторінка page = результати [(page-1)*k, page*k) з топу k*page.
     """
     start = time.perf_counter()
-    tree = parse(q)
-    total = len(engine.searcher.match(tree))  # закешовано в lru_cache, тож майже безкоштовно
-    top = engine.searcher.search(tree, make_scorer(scorer), k * page)
-    terms = set(tree.terms())
+    if mode == "keyword":
+        tree = parse(q)
+        total = len(engine.searcher.match(tree))  # закешовано в lru_cache, майже безкоштовно
+        top = engine.searcher.search(tree, make_scorer(scorer), k * page)
+        terms, shown = set(tree.terms()), str(tree)
+    else:
+        found = search_any(
+            engine.searcher, engine.semantic, q, mode, make_scorer(scorer), SEMANTIC_DEPTH
+        )
+        total, top = len(found), found[: k * page]
+        shown = semantic_text(q)
+        terms = set(tokenize(shown))
     hits: list[Hit] = []
     for r in top[(page - 1) * k :]:
         meta = engine.index.doc_meta[r.doc_id]
         hits.append(Hit(r, snippet_parts(doc_text(meta), terms), source_name(meta.path)))
     took = (time.perf_counter() - start) * 1000
-    return SearchPage(str(tree), scorer, total, page, k, took, hits)
+    return SearchPage(shown, mode, scorer, total, page, k, took, hits)

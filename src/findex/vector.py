@@ -42,11 +42,20 @@ class VectorPostings:
         tf_parts: list[IntArray] = []
         start = 0
         for term in index:
-            plist = index[term]
-            id_parts.append(np.fromiter((p.doc_id for p in plist), np.int32, len(plist)))
-            tf_parts.append(np.fromiter((p.tf for p in plist), np.int32, len(plist)))
-            span[term] = (start, start + len(plist))
-            start += len(plist)
+            if index.kind == "array":
+                # array('I') -> NumPy без копії і без жодного Posting (np.frombuffer).
+                # 'I' - uint32; doc_id < 2^31, тож ті самі байти як int32 - те саме число
+                a_ids, a_tfs = index.arrays[term]
+                ids = np.frombuffer(a_ids, np.int32) if len(a_ids) else np.zeros(0, np.int32)
+                tfs = np.frombuffer(a_tfs, np.int32) if len(a_tfs) else np.zeros(0, np.int32)
+            else:
+                plist = index[term]
+                ids = np.fromiter((p.doc_id for p in plist), np.int32, len(plist))
+                tfs = np.fromiter((p.tf for p in plist), np.int32, len(plist))
+            id_parts.append(ids)
+            tf_parts.append(tfs)
+            span[term] = (start, start + len(ids))
+            start += len(ids)
         n = index.num_docs
         doc_len = np.zeros(n, np.int32)
         for d, length in index.doc_lengths.items():

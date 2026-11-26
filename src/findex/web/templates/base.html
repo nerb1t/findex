@@ -12,6 +12,11 @@
     <a class="brand" href="/">find<span>ex</span></a>
     <form class="search" action="/" method="get" role="search">
       <input type="search" name="q" value="{{ q }}" placeholder='Напр. "white whale" ahab' aria-label="Запит" autocomplete="off" {% if autofocus %}autofocus{% endif %}>
+      <select name="mode" aria-label="Режим пошуку">
+        <option value="keyword" {% if mode not in ('semantic', 'hybrid') %}selected{% endif %}>Слова</option>
+        <option value="semantic" {% if mode == 'semantic' %}selected{% endif %}>За змістом</option>
+        <option value="hybrid" {% if mode == 'hybrid' %}selected{% endif %}>Гібрид</option>
+      </select>
       <select name="scorer" aria-label="Формула балів">
         <option value="bm25" {% if scorer != 'tfidf' %}selected{% endif %}>BM25</option>
         <option value="tfidf" {% if scorer == 'tfidf' %}selected{% endif %}>TF-IDF</option>

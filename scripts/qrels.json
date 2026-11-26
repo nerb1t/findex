@@ -48,7 +48,8 @@
     "shakespeare-macbeth.txt #217",
     "shakespeare-macbeth.txt #258",
     "shakespeare-macbeth.txt #298",
-    "shakespeare-macbeth.txt #329"
+    "shakespeare-macbeth.txt #329",
+    "shakespeare-macbeth.txt #294"
   ],
   "father brown": [
     "chesterton-brown.txt #319",
@@ -74,7 +75,10 @@
     "austen-emma.txt #2047",
     "austen-emma.txt #543",
     "austen-emma.txt #278",
-    "austen-emma.txt #131"
+    "austen-emma.txt #131",
+    "austen-emma.txt #2180",
+    "austen-emma.txt #2033",
+    "austen-emma.txt #703"
   ],
   "brutus OR cassius": [
     "shakespeare-caesar.txt #378",
@@ -90,7 +94,8 @@
     "shakespeare-caesar.txt #427",
     "shakespeare-caesar.txt #635",
     "shakespeare-caesar.txt #678",
-    "shakespeare-caesar.txt #293"
+    "shakespeare-caesar.txt #293",
+    "shakespeare-caesar.txt #286"
   ],
   "anne wentworth": [
     "austen-persuasion.txt #1023",
@@ -106,7 +111,9 @@
     "austen-persuasion.txt #500",
     "austen-persuasion.txt #300",
     "austen-persuasion.txt #676",
-    "austen-persuasion.txt #209"
+    "austen-persuasion.txt #209",
+    "austen-persuasion.txt #744",
+    "austen-persuasion.txt #384"
   ],
   "jesus disciples": [
     "bible-kjv.txt #21083",
@@ -126,6 +133,9 @@
     "bible-kjv.txt #21492",
     "bible-kjv.txt #21068",
     "bible-kjv.txt #19393",
-    "bible-kjv.txt #19502"
+    "bible-kjv.txt #19502",
+    "bible-kjv.txt #21573",
+    "bible-kjv.txt #21595",
+    "bible-kjv.txt #19118"
   ]
 }

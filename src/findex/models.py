@@ -50,7 +50,8 @@ class Index(Mapping[str, list[AnyPosting]]):
     __iter__, а keys(), items(), values(), get(), __contains__ дістаємо безкоштовно.
 
     kind = "plain" | "slots" -> дані в self.postings (списки Posting)
-    kind = "array"           -> дані в self.arrays (два array('I') на терм)
+    kind = "array"           -> дані в self.arrays (два array('I') на терм) і, якщо
+                                є позиції, в self.array_positions (усі позиції терма підряд)
     """
 
     def __init__(
@@ -61,9 +62,12 @@ class Index(Mapping[str, list[AnyPosting]]):
         kind: Kind = "slots",
         positions: bool = False,
         arrays: dict[str, ArrayPostings] | None = None,
+        array_positions: dict[str, array[int]] | None = None,
     ) -> None:
         self.postings = postings
         self.arrays: dict[str, ArrayPostings] = arrays if arrays is not None else {}
+        # Lab 8: компактний індекс з позиціями (для фраз) - ~10x менше пам'яті, ніж Posting
+        self.array_positions: dict[str, array[int]] = array_positions or {}
         self.doc_lengths = doc_lengths
         self.doc_meta = doc_meta
         self.kind: Kind = kind
@@ -75,7 +79,16 @@ class Index(Mapping[str, list[AnyPosting]]):
     def __getitem__(self, term: str) -> list[AnyPosting]:
         if self.kind == "array":
             ids, tfs = self.arrays[term]  # якщо терма немає - KeyError, як у dict
-            return [Posting(d, tf) for d, tf in zip(ids, tfs, strict=True)]
+            pos = self.array_positions.get(term)
+            if pos is None:
+                return [Posting(d, tf) for d, tf in zip(ids, tfs, strict=True)]
+            # об'єкти Posting створюються тільки на час запиту (для фраз)
+            out: list[AnyPosting] = []
+            o = 0
+            for d, tf in zip(ids, tfs, strict=True):
+                out.append(Posting(d, tf, tuple(pos[o : o + tf])))
+                o += tf
+            return out
         return self.postings[term]
 
     def __len__(self) -> int:
@@ -99,6 +112,7 @@ class Index(Mapping[str, list[AnyPosting]]):
             and self.positions == other.positions
             and self.postings == other.postings
             and self.arrays == other.arrays
+            and self.array_positions == other.array_positions
             and self.doc_lengths == other.doc_lengths
             and self.doc_meta == other.doc_meta
         )
@@ -127,6 +141,7 @@ class Index(Mapping[str, list[AnyPosting]]):
     def __setstate__(self, state: dict[str, object]) -> None:
         packed = cast(dict[str, tuple[array[int], array[int], array[int]]], state["postings"])
         self.__dict__.update(state)
+        self.__dict__.setdefault("array_positions", {})  # старі файли (до Lab 8)
         cls = PlainPosting if state["kind"] == "plain" else Posting
         doc_lengths = cast(dict[DocId, int], state["doc_lengths"])
         # один об'єкт int на документ (як при побудові), а не новий на кожен posting
@@ -190,6 +205,13 @@ class Index(Mapping[str, list[AnyPosting]]):
         # doc_id видаються по порядку 0, 1, 2..., а dict зберігає порядок вставки
         return list(self.doc_meta)
 
+    def term_frequency(self, term: str) -> int:
+        """Скільки разів терм зустрічається в усьому корпусі (сума tf)."""
+        if self.kind == "array":
+            pair = self.arrays.get(term)
+            return 0 if pair is None else sum(pair[1])
+        return sum(p.tf for p in self.postings.get(term, ()))
+
     def num_postings(self) -> int:
         if self.kind == "array":
             return sum(len(ids) for ids, _ in self.arrays.values())
@@ -199,6 +221,7 @@ class Index(Mapping[str, list[AnyPosting]]):
         """Звільняє пам'ять. Після close індекс порожній."""
         self.postings = {}
         self.arrays = {}
+        self.array_positions = {}
         self.doc_lengths = {}
         self.doc_meta = {}
         self.__dict__.pop("avg_doc_length", None)  # скинути cached_property

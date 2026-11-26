@@ -11,6 +11,7 @@ from fastapi import Depends, HTTPException, Request
 
 from findex.models import Index
 from findex.search import Searcher
+from findex.semantic import FastEmbedder, SemanticIndex, default_embeddings_path
 from findex.stats import IndexStats, index_stats
 from findex.store import load
 
@@ -24,6 +25,7 @@ class Engine:
     index: Index
     loaded_in: float = 0.0
     index_file_mb: float = 0.0
+    semantic: SemanticIndex | None = None  # Lab 8: None, якщо ембедингів немає
     searcher: Searcher = field(init=False)
 
     def __post_init__(self) -> None:
@@ -40,7 +42,9 @@ class AppState:
     error: str | None = None
     started: float = field(default_factory=time.monotonic)
 
-    async def load(self, path: Path) -> None:
+    async def load(
+        self, path: Path, embeddings: Path | None = None, model_dir: Path | None = None
+    ) -> None:
         """Вантажимо індекс у потоці: pickle на 35 MB - це ~3 s роботи CPU,
         і цикл подій тим часом відповідає на /health (503 "loading")."""
         start = time.perf_counter()
@@ -49,6 +53,9 @@ class AppState:
             engine = Engine(index)
             # масиви NumPy для скорера (Lab 8) будуємо теж у потоці, а не в циклі подій
             await asyncio.to_thread(lambda: engine.searcher.vectors)
+            emb = embeddings or default_embeddings_path(path)
+            if emb.exists():
+                engine.semantic = await asyncio.to_thread(load_semantic, emb, model_dir)
         except Exception as e:  # noqa: BLE001  # немає файлу / не індекс - сервіс живий, але 503
             self.error = f"{type(e).__name__}: {e}"
             log.error("cannot load index %s: %s", path, self.error)
@@ -58,6 +65,18 @@ class AppState:
         engine.index_file_mb = path.stat().st_size / 2**20
         self.engine = engine
         log.info("loaded %r from %s in %.1f s", index, path, took)
+
+
+def load_semantic(path: Path, model_dir: Path | None) -> SemanticIndex | None:
+    """Ембединги + модель. Якщо щось не так - сервіс працює далі, але лише keyword."""
+    try:
+        sem = SemanticIndex.load(path)
+        sem.embedder = FastEmbedder(sem.model, str(model_dir) if model_dir else None)
+    except Exception as e:  # noqa: BLE001
+        log.warning("semantic search disabled: %s: %s", type(e).__name__, e)
+        return None
+    log.info("loaded %d chunk embeddings (%s) from %s", len(sem.owner), sem.model, path)
+    return sem
 
 
 def get_app_state(request: Request) -> AppState:

@@ -53,8 +53,6 @@ def test_make_tasks(big_corpus: Path) -> None:
 @pytest.mark.parametrize("kind", ["slots", "plain", "array"])
 def test_serial_merge_equals_lab4(big_corpus: Path, kind: Kind, positions: bool) -> None:
     """merge([build_partial(усі шляхи)]) == build_index з Lab 4."""
-    if kind == "array" and positions:
-        pytest.skip("array не підтримує positions")
     ref = build_index(big_corpus, kind=kind, positions=positions)
     paths = sorted(big_corpus.glob("*.txt"))
     one = merge([build_partial(Task(p), kind, positions) for p in paths], kind, positions)
@@ -116,9 +114,9 @@ def test_worker_exception_surfaces(tmp_path: Path, executor: ExecutorName) -> No
         assert "build_partial" in str(info.value.__cause__)
 
 
-def test_array_positions_error(big_corpus: Path) -> None:
-    with pytest.raises(ValueError):
-        build_index_parallel(big_corpus, "serial", kind="array", positions=True)
+def test_array_positions_parallel(big_corpus: Path) -> None:
+    ref = build_index(big_corpus, kind="array", positions=True)
+    assert build_index_parallel(big_corpus, "threads", 3, kind="array", positions=True) == ref
 
 
 @pytest.mark.parametrize(

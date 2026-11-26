@@ -98,12 +98,11 @@ def build_index_from_units(
     скидаємо його в postings. doc_id ростуть, тому кожен список postings
     одразу відсортований, sort не потрібен.
     """
-    if kind == "array" and positions:
-        raise ValueError("positions are not supported for kind='array'")
 
     postings: defaultdict[str, list[AnyPosting]] = defaultdict(list)
     # два паралельні масиви: doc_ids і tfs, по 4 байти на число
     arrays: defaultdict[str, ArrayPostings] = defaultdict(lambda: (array("I"), array("I")))
+    array_pos: defaultdict[str, array[int]] = defaultdict(lambda: array("I"))
     posting_cls = PlainPosting if kind == "plain" else Posting
 
     doc_lengths: dict[DocId, int] = {}
@@ -118,7 +117,13 @@ def build_index_from_units(
                 pos[term].append(i)
                 n_tokens = i + 1
             for term, lst in pos.items():
-                postings[term].append(posting_cls(doc_id, len(lst), tuple(lst)))
+                if kind == "array":
+                    ids, tfs = arrays[term]
+                    ids.append(doc_id)
+                    tfs.append(len(lst))
+                    array_pos[term].extend(lst)
+                else:
+                    postings[term].append(posting_cls(doc_id, len(lst), tuple(lst)))
         else:
             counts = Counter(tokenize(u.text))
             n_tokens = counts.total()
@@ -135,7 +140,9 @@ def build_index_from_units(
 
     # звичайний dict: defaultdict з lambda не можна запікліти,
     # і щоб пошук неіснуючого терма не додавав порожні списки
-    return Index(dict(postings), doc_lengths, doc_meta, kind, positions, dict(arrays))
+    return Index(
+        dict(postings), doc_lengths, doc_meta, kind, positions, dict(arrays), dict(array_pos)
+    )
 
 
 def _notify(docs: Iterable[Document], on_book: Callable[[Path], None]) -> Iterator[Document]:

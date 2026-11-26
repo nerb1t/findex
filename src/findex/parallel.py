@@ -172,6 +172,7 @@ def _merge(partials: Iterable[PartialIndex], kind: Kind, positions: bool) -> Ind
     """
     postings: defaultdict[str, list[AnyPosting]] = defaultdict(list)
     arrays: defaultdict[str, ArrayPostings] = defaultdict(lambda: (array("I"), array("I")))
+    array_pos: defaultdict[str, array[int]] = defaultdict(lambda: array("I"))
     doc_lengths: dict[DocId, int] = {}
     doc_meta: dict[DocId, DocMeta] = {}
     paths: dict[str, str] = {}  # один об'єкт str на книгу (як у Lab 4), а не на кожну частину
@@ -184,6 +185,10 @@ def _merge(partials: Iterable[PartialIndex], kind: Kind, positions: bool) -> Ind
                 out_ids, out_tfs = arrays[term]
                 out_ids.extend(d + offset for d in ids)
                 out_tfs.extend(tfs)
+                if positions and part.positions is not None:
+                    out_pos = array_pos[term]
+                    for p in part.positions[term]:
+                        out_pos.extend(p)
             elif positions and part.positions is not None:
                 plist = postings[term]
                 for d, tf, p in zip(ids, tfs, part.positions[term], strict=True):
@@ -197,7 +202,9 @@ def _merge(partials: Iterable[PartialIndex], kind: Kind, positions: bool) -> Ind
             )
         offset += len(part.doc_lengths)
 
-    return Index(dict(postings), doc_lengths, doc_meta, kind, positions, dict(arrays))
+    return Index(
+        dict(postings), doc_lengths, doc_meta, kind, positions, dict(arrays), dict(array_pos)
+    )
 
 
 def default_workers() -> int:
@@ -269,8 +276,6 @@ def build_index_parallel(
     on_done: Callable[[Task], None] | None = None,
 ) -> Index:
     """Те саме, що build_index з Lab 4, але map-крок іде в пулі."""
-    if kind == "array" and positions:
-        raise ValueError("positions are not supported for kind='array'")
     workers = workers or default_workers()
     paths = corpus_files(Path(root))[:limit]
     tasks = make_tasks(paths, unit, chunk_kb)

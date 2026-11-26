@@ -9,6 +9,7 @@ from fastapi.templating import Jinja2Templates
 
 from findex.query import QueryError, parse
 from findex.scoring import ScorerName
+from findex.semantic import SearchMode
 from findex.snippet import doc_text, highlight_all
 from findex.web.service import SearchPage, run_search, source_name
 from findex.web.state import AppState, get_app_state
@@ -23,6 +24,12 @@ EXAMPLES = [
     "brutus OR cassius",
     "emma harriet NOT knightley",
     "(sea OR ocean) storm",
+]
+# запити без спільних слів з текстом - для режиму semantic
+SEMANTIC_EXAMPLES = [
+    "captain obsessed with revenge on a sea monster",
+    "girl falls down a hole into a strange world",
+    "son sees the spirit of his murdered father",
 ]
 
 
@@ -45,13 +52,16 @@ def home(
     q: Annotated[str, Query(max_length=200)] = "",
     scorer: ScorerName = "bm25",
     page: Annotated[int, Query(ge=1, le=100)] = 1,
+    mode: SearchMode = "keyword",
     state: AppState = Depends(get_app_state),
 ) -> HTMLResponse:
     # def, а не async def: пошук - робота CPU, хай іде в пулі потоків
     ctx: dict[str, object] = {
         "q": q,
         "scorer": scorer,
+        "mode": mode,
         "examples": EXAMPLES,
+        "semantic_examples": SEMANTIC_EXAMPLES,
         "result": None,
         "error": None,
     }
@@ -60,9 +70,10 @@ def home(
         ctx["error"] = "Індекс ще завантажується, оновіть сторінку за кілька секунд."
         return templates.TemplateResponse(request, "index.html", ctx, status_code=503)
     ctx["documents"] = engine.index.num_docs
+    ctx["semantic"] = engine.semantic is not None
     if q.strip():
         try:
-            result: SearchPage = run_search(engine, q, 10, scorer, page)
+            result: SearchPage = run_search(engine, q, 10, scorer, page, mode)
         except QueryError as e:
             ctx["error"] = f"Не вдалося розібрати запит: {e}"
         else:
