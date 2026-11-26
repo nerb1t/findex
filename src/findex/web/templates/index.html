@@ -56,7 +56,7 @@
         {% for ex in examples %}<a href="/?q={{ ex|urlencode }}">{{ ex }}</a>{% endfor %}
       </p>
       {% if semantic %}
-      <p class="examples">За змістом (слів із запиту в тексті немає):
+      <p class="examples">За змістом, своїми словами:
         {% for ex in semantic_examples %}<a href="/?q={{ ex|urlencode }}&mode=semantic">{{ ex }}</a>{% endfor %}
       </p>
       {% endif %}

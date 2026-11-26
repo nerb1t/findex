@@ -29,7 +29,7 @@ def test_help() -> None:
 def test_version() -> None:
     result = runner.invoke(app, ["--version"])
     assert result.exit_code == 0
-    assert result.stdout.startswith("findex 0.7")
+    assert result.stdout.startswith("findex 1.0")
 
 
 def test_index_cmd(ix_file: Path) -> None:

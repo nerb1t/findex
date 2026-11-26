@@ -1,6 +1,6 @@
 [project]
 name = "findex"
-version = "0.7.0"
+version = "1.0.0"
 description = "findex — a small search engine built step by step (Python course)"
 authors = [{ name = "Ilia Shevel" }]
 keywords = ["search", "inverted-index", "bm25", "cli"]
