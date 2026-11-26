@@ -21,3 +21,7 @@ jobs:
       - name: Tests
         # корпусу data/ в git немає, тому тести на справжніх книгах будуть skipped
         run: uv run pytest --cov=findex --cov-report=term-missing
+      - name: Benchmarks (pytest-benchmark)
+        # медіана build_index і search на синтетичному корпусі; тест падає, якщо
+        # час перевищив щедру стелю (груба регресія)
+        run: uv run pytest tests/test_bench.py --benchmark-enable --benchmark-only --benchmark-columns=min,median,max,rounds

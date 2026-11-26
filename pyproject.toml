@@ -36,6 +36,7 @@ dev = [
     "py-spy>=0.4.4",
     "pyright>=1.1.414",
     "pytest>=9.2.0",
+    "pytest-benchmark>=5.3.1",
     "pytest-cov>=7.1.0",
     "ruff>=0.17.6",
 ]
@@ -57,6 +58,8 @@ extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Path"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# бенчмарки у звичайному прогоні - лише як тести (один виклик); заміри: --benchmark-enable
+addopts = "--benchmark-disable"
 markers = ["slow: довгі тести (> 1 s), пропустити: -m \"not slow\""]
 filterwarnings = [
     # Starlette радить httpx2 для TestClient; поки що лишаємось на httpx

@@ -32,4 +32,18 @@ uv run py-spy record -s -r 200 -o docs/flame-index.svg -- .venv/Scripts/python.e
 ## Ще не зроблено
 
 - Розподіл «час у Python / нативний час» через Scalene (на Windows Scalene працює обмежено) — наступний крок.
-- Самі оптимізації (M2), pytest-benchmark у CI.
+- Самі оптимізації (M2).
+
+## pytest-benchmark (база до M2)
+
+`tests/test_bench.py`: синтетичний корпус (2 "книги" по 1500 абзаців, слова за законом Ципфа), `build_index` з позиціями і `search` з BM25. У звичайному `pytest` бенчмарки вимкнені (`--benchmark-disable`: один виклик, лише як тест). В CI окремий крок їх вмикає і падає, якщо медіана перевищила щедру стелю (`build_index` < 1.5 s, `search` < 20 ms): так видно грубу регресію, а не шум між машинами.
+
+```
+uv run python -m pytest tests/test_bench.py --benchmark-enable --benchmark-only
+```
+
+| Бенчмарк | min, ms | median, ms | max, ms | rounds |
+|---|---:|---:|---:|---:|
+| `search("the")` | 2.67 | 2.94 | 3.80 | 305 |
+| `search("the white whale")` | 4.57 | 5.02 | 8.30 | 160 |
+| `build_index(positions=True)`, 3000 документів | 223.8 | 235.0 | 239.2 | 5 |
