@@ -33,6 +33,7 @@ dev = [
     "hypothesis>=6.170.17",
     "matplotlib>=3.11.2",
     "psutil>=7.2.2",
+    "py-spy>=0.4.4",
     "pyright>=1.1.414",
     "pytest>=9.2.0",
     "pytest-cov>=7.1.0",

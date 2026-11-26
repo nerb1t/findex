@@ -297,6 +297,7 @@ dev = [
     { name = "hypothesis" },
     { name = "matplotlib" },
     { name = "psutil" },
+    { name = "py-spy" },
     { name = "pyright" },
     { name = "pytest" },
     { name = "pytest-cov" },
@@ -319,6 +320,7 @@ dev = [
     { name = "hypothesis", specifier = ">=6.170.17" },
     { name = "matplotlib", specifier = ">=3.11.2" },
     { name = "psutil", specifier = ">=7.2.2" },
+    { name = "py-spy", specifier = ">=0.4.4" },
     { name = "pyright", specifier = ">=1.1.414" },
     { name = "pytest", specifier = ">=9.2.0" },
     { name = "pytest-cov", specifier = ">=7.1.0" },
@@ -1141,6 +1143,22 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/04/78/0acd37ca84ce3ddffaa92ef0f571e073faa6d8ff1f0559ab1272188ea2be/psutil-7.2.2-cp36-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:b58fabe35e80b264a4e3bb23e6b96f9e45a3df7fb7eed419ac0e5947c61e47cc", size = 148266, upload-time = "2026-01-28T18:15:31.597Z" },
     { url = "https://files.pythonhosted.org/packages/b4/90/e2159492b5426be0c1fef7acba807a03511f97c5f86b3caeda6ad92351a7/psutil-7.2.2-cp37-abi3-win_amd64.whl", hash = "sha256:eb7e81434c8d223ec4a219b5fc1c47d0417b12be7ea866e24fb5ad6e84b3d988", size = 137737, upload-time = "2026-01-28T18:15:33.849Z" },
     { url = "https://files.pythonhosted.org/packages/8c/c7/7bb2e321574b10df20cbde462a94e2b71d05f9bbda251ef27d104668306a/psutil-7.2.2-cp37-abi3-win_arm64.whl", hash = "sha256:8c233660f575a5a89e6d4cb65d9f938126312bca76d8fe087b947b3a1aaac9ee", size = 134617, upload-time = "2026-01-28T18:15:36.514Z" },
+]
+
+[[package]]
+name = "py-spy"
+version = "0.4.4"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/59/6e/55358d97f53c187301e25e3c5f95fca6c161b3677209f3653ce6c08df05e/py_spy-0.4.4.tar.gz", hash = "sha256:f8999a122ca2e17875e76114216b3821429f22e0a5d76c10a0a3ff966dca5f3b", size = 423645, upload-time = "2026-11-19T19:09:26.831Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b9/80/e9036768469c3e139346593ad4d2593062c0a0816fd3d684ed227f50bd40/py_spy-0.4.4-py2.py3-none-macosx_10_12_universal2.macosx_10_12_x86_64.macosx_11_0_arm64.whl", hash = "sha256:d3d3acf5a0cfe7fa8f5b7101dc7d964832e6dc11b0e81877270a071b8ffd6ba0", size = 3758621, upload-time = "2026-11-19T19:09:14.413Z" },
+    { url = "https://files.pythonhosted.org/packages/a9/08/34c9581c548310bc0e5a61e50a1fea0d7a73b0558e11c1a5f6f6514d038e/py_spy-0.4.4-py2.py3-none-macosx_11_0_arm64.whl", hash = "sha256:8a5adbb5b3ef11bf5132edbd9f841052053abab572f18d3beec166c3f3c14790", size = 1866119, upload-time = "2026-11-19T19:09:15.976Z" },
+    { url = "https://files.pythonhosted.org/packages/c8/0d/7d93c04e7773b817394c03d35dd8aa5e1c8a5e2b08089fa1c48f81731e93/py_spy-0.4.4-py2.py3-none-manylinux1_i686.manylinux_2_5_i686.whl", hash = "sha256:1991e9d7dc55bd0a9239d91717aa9fba31068ff5269e1a66ac5041e98d0e2691", size = 2379220, upload-time = "2026-11-19T19:09:17.438Z" },
+    { url = "https://files.pythonhosted.org/packages/67/48/7e1e82c5e8f8d8c26c1c0be4e4ea47e546ea473ac56c7b69cf61b0495bd8/py_spy-0.4.4-py2.py3-none-manylinux1_x86_64.manylinux_2_5_x86_64.whl", hash = "sha256:286a9ab113d255ffc10bf7e7fe2ae78c82d0dedb95259888e72935cdbd8f41d2", size = 2985738, upload-time = "2026-11-19T19:09:18.927Z" },
+    { url = "https://files.pythonhosted.org/packages/79/d0/0099384c2fa7155eefa0713a4edc48115229e905c569577977e120edaa58/py_spy-0.4.4-py2.py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:a91503bfd625a8ebb304f02ebfe34dd8a5e9873043e6e39138d310840cec18cb", size = 2869099, upload-time = "2026-11-19T19:09:20.632Z" },
+    { url = "https://files.pythonhosted.org/packages/eb/29/0e400908ca1c377f5647d1fe87cc41a778e294d4abb74ceaf63ec0f942ce/py_spy-0.4.4-py2.py3-none-manylinux2014_armv7l.manylinux_2_17_armv7l.whl", hash = "sha256:b6a19affdc08b2080f1cd6a05b70865700b92b146c3423f57335e0c06866e3a0", size = 2898298, upload-time = "2026-11-19T19:09:22.095Z" },
+    { url = "https://files.pythonhosted.org/packages/b8/0b/2c2fde1c4532bccdc2fbe8856d6009698271360ef5083569d8d7e6e4e352/py_spy-0.4.4-py2.py3-none-win_amd64.whl", hash = "sha256:aaf9a921788fa48fcbc13068f8171af422eb2024888e70406a790fee3613555e", size = 1950123, upload-time = "2026-11-19T19:09:23.809Z" },
+    { url = "https://files.pythonhosted.org/packages/d9/6d/924760d0bf26c8b8eebb74c6753a6fc550b87a2dcaaed7da71cc5c5990fe/py_spy-0.4.4-py2.py3-none-win_arm64.whl", hash = "sha256:358c97827dfe53fb30e2068862367f3ee4bfacaec7a1ba37a184779a2a899dc3", size = 1826007, upload-time = "2026-11-19T19:09:25.491Z" },
 ]
 
 [[package]]
