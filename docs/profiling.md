@@ -31,7 +31,6 @@ uv run py-spy record -s -r 200 -o docs/flame-index.svg -- .venv/Scripts/python.e
 
 ## Ще не зроблено
 
-- Розподіл «час у Python / нативний час» через Scalene (на Windows Scalene працює обмежено) — наступний крок.
 
 ## pytest-benchmark (база до M2)
 
@@ -85,3 +84,20 @@ scores[pos] += part  # scatter-add
 | `search("the")` | 2.94 ms | 0.142 ms | 20.7× |
 | `search("the white whale")` | 5.02 ms | 0.210 ms | 23.9× |
 | `build_index` | 235 ms | 203 ms | не змінювали (різниця — шум) |
+
+## Scalene: Python-час чи нативний час (зроблено вже після M2)
+
+`scripts/scalene_search.py`: завантаження `index_pos.bin` і 150 разів `search("the")` старим циклом Lab 3 та NumPy. Scalene 2.4 `run --cpu-only --profile-all`.
+
+- **На Windows** Scalene майже все записує в «native», навіть чистий Python-рядок циклу Lab 3. Цьому розподілу на Windows я не довіряю.
+- **Тому прогнав у Linux-контейнері** (образ findex + `pip install scalene`). Частка CPU по файлах findex (решта, 71.6%, Scalene відніс до `threading.py` — найімовірніше, очікування власного потоку профайлера, тож дивимось на співвідношення між рядками findex):
+
+| Рядок | всього | Python | native | Що це |
+|---|---:|---:|---:|---|
+| `search.py:86` `scores[p.doc_id] += scorer(term, p, self.index)` | 3.2% | 0.2 | 3.0 | цикл Lab 3: на кожен posting — виклик скорера, dict `+=` |
+| `scoring.py:48` `math.log(1 + (n - df + 0.5) / (df + 0.5))` | 2.5% | 0.0 | 2.4 | `idf` заново на **кожен** posting (35 572 рази на запит) |
+| `vector.py:58–59` `np.fromiter((p.doc_id for p in plist), ...)` | 4.3% | 2.6 | 1.6 | одноразове перекладання `Posting` → NumPy (для `slots`) |
+| `models.py:158` `cls(doc_ints[d], tf, tuple(pos[o:o+tf]))` | 1.8% | 0.0 | 1.6 | збирання `Posting` при завантаженні pickle |
+| `scoring.py:44/50`, `models.py:185` (заголовки `idf`, `__call__`, `doc_length`) | 4.1% | 2.9 | 1.2 | ціна самих викликів Python-функцій |
+
+**Як я це читаю.** Цикл Lab 3 Scalene показує як «native», бо кожна ітерація закінчується в C: `dict.__setitem__`, арифметика `float`, `math.log`. Але дорого не самі ці операції, а те, що їх 35 572 на запит, і між ними щоразу інтерпретатор: виклики функцій (`idf`, `__call__`, `doc_length` — це вже видимий Python-час) і створення нових `float`-об'єктів. Векторизація прибирає саме це: одна операція NumPy на весь масив замість 35 572 викликів. Звідси 15.6× на частому терміні. `vector.py:58–59` — єдиний помітний Python-час, що лишився. Це генератори по об'єктах `Posting` під час перекладання індексу `slots` у масиви, і для компактного індексу (`--kind array`) цього кроку немає зовсім (`np.frombuffer`).
